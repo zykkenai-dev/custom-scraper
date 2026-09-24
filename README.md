@@ -144,6 +144,32 @@ then WhatsApp → Instagram → LinkedIn → phones. Exports are sorted best-fir
 and each row is tagged `quality_label` (high / medium / low) so you prospect
 the strongest contacts first.
 
+## Supabase lead storage (optional)
+
+The scraper can also upsert each successful run into a Supabase `public.leads`
+table. This is persistence only; it does not move the local dashboard or its
+authentication to Vercel.
+
+1. In Supabase, open **SQL Editor → New query** and run
+   [`supabase/schema.sql`](supabase/schema.sql).
+2. Copy the Supabase **Project URL** and **Secret key** from
+   **Project Settings → API Keys**.
+3. Set these server-side environment variables (locally in `.env`, or in
+   Vercel for a hosted deployment):
+
+   ```dotenv
+   SUPABASE_URL=https://your-project-ref.supabase.co
+   SUPABASE_SECRET_KEY=sb_secret_...
+   ```
+
+4. Run the CLI normally. When both variables are present, the run writes the
+   filtered leads to Supabase after the local export. Re-running a website
+   upserts/refreshes its existing row rather than creating duplicates.
+
+The secret key bypasses Row Level Security and must stay in a server environment;
+never put it in `dashboard/app.js`, commit it, or send it through chat. No
+Supabase Auth setup is required for lead persistence.
+
 ## API keys (optional)
 
 - **[SerpAPI]** — `SERPAPI_KEY`: higher-quality Google organic results and
@@ -206,7 +232,8 @@ dedupe (by website) → CSV / JSON export
 config/   settings (delays, retries, proxy list) + niche definitions
 core/     data model, extractors, networking, niche filter
 sources/  search clients, page fetcher, collection pipeline, social/email enrichment
-output/   CSV + JSON exporters
+output/   CSV + JSON exporters + optional Supabase lead store
+supabase/ SQL schema for the optional leads table
 utils/    proxy pool, host chunking helpers
 ```
 

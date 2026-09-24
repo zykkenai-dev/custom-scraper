@@ -21,6 +21,7 @@ from config.settings import get_settings
 from core.models import CSV_HEADERS
 from sources.collector import SearchSource
 from output.exporter import dedupe_leads, export_leads, load_leads
+from output.supabase_store import SupabaseStoreError, save_leads
 
 logger = logging.getLogger("main")
 
@@ -319,6 +320,15 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as exc:
         logger.error("Could not export leads: %s", exc)
         return 1
+
+    try:
+        saved_to_supabase = save_leads(all_leads)
+    except SupabaseStoreError as exc:
+        logger.error("Could not save leads to Supabase: %s", exc)
+        return 1
+    if saved_to_supabase:
+        print(f"  Saved {saved_to_supabase} leads to Supabase.")
+
     print(f"\nDone. Wrote {len(all_leads)} new leads to {out_path}")
     if not args.no_merge and (args.fresh is False) and prior_leads:
         print(f"  {len(prior_leads)} prior leads were preserved/merged.")

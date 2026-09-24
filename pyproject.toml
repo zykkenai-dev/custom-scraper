@@ -1,2 +1,16 @@
+[project]
+name = "custom-scraper"
+version = "0.1.0"
+description = "A configurable B2B lead scraper with an optional Supabase lead store."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31.0,<3",
+    "beautifulsoup4>=4.12.0,<5",
+    "lxml>=4.9.0,<7",
+    "python-dotenv>=1.0.0,<2",
+    "email-validator>=2.0.0,<3",
+]
+
 [tool.vercel]
 entrypoint = "dashboard.server:Handler"
