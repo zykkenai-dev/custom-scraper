@@ -128,6 +128,12 @@ class TestHostedOrigin:
         monkeypatch.setenv("DASHBOARD_ALLOWED_HOSTS", "dashboard.example.com")
         assert server._dashboard_host_allowed("dashboard.example.com") is True
 
+    def test_serverless_run_is_rejected_before_spawning(self, monkeypatch):
+        monkeypatch.setenv("VERCEL", "1")
+        ok, info = server.start_run({"niche": ["real_estate"], "max": 1})
+        assert ok is False
+        assert "serverless jobs are not durable" in info["error"]
+
     def test_hosted_login_page_and_api_guard_without_local_auth(self, monkeypatch):
         monkeypatch.setenv("VERCEL", "1")
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)

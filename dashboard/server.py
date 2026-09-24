@@ -322,6 +322,8 @@ def build_status() -> dict:
         leads_mtime = None
     return {
         "running": running,
+        "hosted": _serverless_runtime(),
+        "run_supported": not _serverless_runtime(),
         "pid": proc.pid if proc else None,
         "niche": ", ".join(snap["niches"]) if snap["niches"] else ("-" if not niches else ", ".join(niches)),
         "niches": snap["niches"] or niches,
@@ -379,6 +381,14 @@ def _host_from_value(value: str) -> str:
         return ""
 
 
+def _serverless_runtime() -> bool:
+    """Whether this handler is running inside a Vercel-style function."""
+    return any(
+        os.getenv(name)
+        for name in ("VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
+    )
+
+
 def _dashboard_host_allowed(host: str) -> bool:
     """Allow loopback locally and explicitly trusted hosts when deployed.
 
@@ -400,10 +410,7 @@ def _dashboard_host_allowed(host: str) -> bool:
     if normalized in configured:
         return True
 
-    vercel_runtime = any(
-        os.getenv(name)
-        for name in ("VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
-    )
+    vercel_runtime = _serverless_runtime()
     vercel_hosts = {
         _host_from_value(os.getenv(name, ""))
         for name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
@@ -415,10 +422,7 @@ def _dashboard_host_allowed(host: str) -> bool:
 
 def _get_hosted_auth() -> HostedAuthStore | None:
     """Build the stateless Vercel auth store once per warm function instance."""
-    if not any(
-        os.getenv(name)
-        for name in ("VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
-    ):
+    if not _serverless_runtime():
         return None
     global _hosted_auth
     with _hosted_auth_lock:
@@ -510,6 +514,14 @@ def _resolve_niche_ids() -> list:
 
 
 def start_run(opts: dict) -> tuple[bool, dict]:
+    if _serverless_runtime():
+        return False, {
+            "error": (
+                "Scraping is disabled on the Vercel dashboard because serverless "
+                "jobs are not durable. Run the scraper from the project computer; "
+                "it will save leads to Supabase when configured."
+            )
+        }
     niche_opts = _resolve_niche_ids()
     niche = opts.get("niche") or [niche_opts[0]]
     if isinstance(niche, str):
