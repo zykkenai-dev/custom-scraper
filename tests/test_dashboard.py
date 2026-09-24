@@ -128,11 +128,34 @@ class TestHostedOrigin:
         monkeypatch.setenv("DASHBOARD_ALLOWED_HOSTS", "dashboard.example.com")
         assert server._dashboard_host_allowed("dashboard.example.com") is True
 
-    def test_serverless_run_is_rejected_before_spawning(self, monkeypatch):
+    def test_serverless_run_is_synchronous(self, monkeypatch):
         monkeypatch.setenv("VERCEL", "1")
-        ok, info = server.start_run({"niche": ["real_estate"], "max": 1})
+        calls = []
+
+        class Completed:
+            stdout = "Done. Wrote 1 new leads\nSaved 1 leads to Supabase."
+            returncode = 0
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return Completed()
+
+        monkeypatch.setattr(server.subprocess, "run", fake_run)
+        ok, info = server.start_run({
+            "niche": ["real_estate"], "max": 1,
+            "out": "data/leads.csv", "fresh": True,
+        })
+        assert ok is True
+        assert info["synchronous"] is True
+        assert info["exit_code"] == 0
+        assert calls[0][1]["timeout"] == server.HOSTED_TIMEOUT_SECONDS
+        assert calls[0][0][calls[0][0].index("--out") + 1].startswith("/tmp/")
+
+    def test_serverless_run_rejects_large_test(self, monkeypatch):
+        monkeypatch.setenv("VERCEL", "1")
+        ok, info = server.start_run({"niche": ["real_estate"], "max": 11})
         assert ok is False
-        assert "serverless jobs are not durable" in info["error"]
+        assert "at most 10" in info["error"]
 
     def test_hosted_login_page_and_api_guard_without_local_auth(self, monkeypatch):
         monkeypatch.setenv("VERCEL", "1")

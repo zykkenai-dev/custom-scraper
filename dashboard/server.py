@@ -21,7 +21,9 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import threading
+import uuid
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +41,8 @@ KNOWN_NICHES = [
     "real_estate", "finance", "healthcare", "legal", "saas",
     "ecommerce", "coaching", "automotive", "hospitality",
 ]
+HOSTED_MAX_LEADS = 10
+HOSTED_TIMEOUT_SECONDS = 240
 
 # ---------------------------------------------------------------- state
 
@@ -323,7 +327,8 @@ def build_status() -> dict:
     return {
         "running": running,
         "hosted": _serverless_runtime(),
-        "run_supported": not _serverless_runtime(),
+        "hosted_test_mode": _serverless_runtime(),
+        "run_supported": True,
         "pid": proc.pid if proc else None,
         "niche": ", ".join(snap["niches"]) if snap["niches"] else ("-" if not niches else ", ".join(niches)),
         "niches": snap["niches"] or niches,
@@ -513,15 +518,8 @@ def _resolve_niche_ids() -> list:
         return KNOWN_NICHES
 
 
-def start_run(opts: dict) -> tuple[bool, dict]:
-    if _serverless_runtime():
-        return False, {
-            "error": (
-                "Scraping is disabled on the Vercel dashboard because serverless "
-                "jobs are not durable. Run the scraper from the project computer; "
-                "it will save leads to Supabase when configured."
-            )
-        }
+def _prepare_run(opts: dict, *, hosted: bool = False) -> tuple[dict | None, str | None]:
+    """Validate dashboard options and build a safe scraper command."""
     niche_opts = _resolve_niche_ids()
     niche = opts.get("niche") or [niche_opts[0]]
     if isinstance(niche, str):
@@ -531,21 +529,33 @@ def start_run(opts: dict) -> tuple[bool, dict]:
         max_leads = max(1, min(int(opts.get("max", 6)), 500))
     except (TypeError, ValueError):
         max_leads = 6
-    out = _output_path(str(opts.get("out") or "data/leads.csv").strip())
-    if out is None:
-        return False, {"error": "output must be a .csv or .json file under data/ or output/"}
+    if hosted and max_leads > HOSTED_MAX_LEADS:
+        return None, (
+            f"Hosted test mode supports at most {HOSTED_MAX_LEADS} leads per niche. "
+            "Use the local CLI or a durable worker for larger runs."
+        )
+
+    requested_out = str(opts.get("out") or "data/leads.csv").strip()
+    if hosted:
+        suffix = ".json" if Path(requested_out).suffix.lower() == ".json" else ".csv"
+        out = f"/tmp/lead-studio-{uuid.uuid4().hex}{suffix}"
+    else:
+        out = _output_path(requested_out)
+        if out is None:
+            return None, "output must be a .csv or .json file under data/ or output/"
+
     seeds = str(opts.get("seeds") or "").strip()
     if seeds:
         seed_path = (ROOT / seeds).resolve()
         if not _is_under(seed_path, (ROOT / "data").resolve()) or not seed_path.is_file():
-            return False, {"error": "seeds must be an existing file under data/"}
+            return None, "seeds must be an existing file under data/"
     try:
         workers = int(opts.get("workers") or 2)
-        workers = max(1, min(workers, 8))
+        workers = max(1, min(workers, 8 if not hosted else 2))
     except (TypeError, ValueError):
-        workers = 2
+        workers = 1 if hosted else 2
 
-    py = _resolve_python()  # venv-aware: works from any interpreter
+    py = sys.executable if hosted else _resolve_python()
     cmd = [py, "-u", "main.py", "--niche", *niche, "--max", str(max_leads),
            "--out", out, "--workers", str(workers)]
     if seeds:
@@ -571,34 +581,120 @@ def start_run(opts: dict) -> tuple[bool, dict]:
     elif opts.get("no_merge"):
         cmd += ["--no-merge"]
 
-    # friendly display string (quote only paths with spaces)
     def q(a: str) -> str:
         return f'"{a}"' if " " in a else a
 
-    cmd_str = " ".join(q(a) for a in cmd)
+    return {
+        "niche": niche,
+        "max": max_leads,
+        "out": out,
+        "seeds": seeds,
+        "workers": workers,
+        "cmd": cmd,
+        "cmd_str": " ".join(q(a) for a in cmd),
+    }, None
 
+
+def _text_output(value) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
+def _start_hosted_run(opts: dict) -> tuple[bool, dict]:
+    """Run a short scrape synchronously inside a Vercel invocation.
+
+    This is intentionally a test-sized path: the request remains open until the
+    scraper exits, and the output is written to /tmp before Supabase persistence.
+    Long jobs still belong in a durable worker/queue.
+    """
+    config, error = _prepare_run(opts, hosted=True)
+    if error:
+        return False, {"error": error}
+    assert config is not None
+    started = utcnow()
+    with _lock:
+        p = _run["proc"]
+        if p is not None and p.poll() is None:
+            return False, {"error": "a scrape is already running", "pid": p.pid}
+        _run.update(
+            proc=None, cmd=config["cmd"], cmd_str=config["cmd_str"],
+            niches=config["niche"], max=config["max"], out_file=config["out"],
+            seeds=config["seeds"], started_at=started, ended_at=None,
+            exit_code=None, queries_seen=[],
+        )
+    _append_log(f"### START {started.isoformat()} :: {config['cmd_str']}")
+    try:
+        completed = subprocess.run(
+            config["cmd"], cwd=str(ROOT), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, timeout=HOSTED_TIMEOUT_SECONDS,
+            check=False,
+        )
+        output = _text_output(completed.stdout)
+        code = int(completed.returncode)
+    except subprocess.TimeoutExpired as exc:
+        output = _text_output(exc.stdout)
+        code = 124
+    except OSError as exc:
+        output = f"Failed to launch scraper: {exc}"
+        code = 127
+
+    for line in output.splitlines()[-500:]:
+        _append_log(line)
+    with _lock:
+        _run["ended_at"] = utcnow()
+        _run["exit_code"] = code
+    _append_log(f"### EXIT code={code} at {utcnow().isoformat()}")
+    info = {
+        "synchronous": True,
+        "exit_code": code,
+        "cmd": config["cmd_str"],
+        "log_tail": output.splitlines()[-20:],
+    }
+    if code == 0:
+        info["message"] = "Hosted test scrape completed. Leads were saved to Supabase when configured."
+        return True, info
+    info["error"] = (
+        "Hosted test scrape timed out. Reduce the lead limit or use a durable worker."
+        if code == 124
+        else f"Hosted test scrape failed with exit code {code}."
+    )
+    return False, info
+
+
+def start_run(opts: dict) -> tuple[bool, dict]:
+    if _serverless_runtime():
+        return _start_hosted_run(opts)
+    config, error = _prepare_run(opts)
+    if error:
+        return False, {"error": error}
+    assert config is not None
     with _lock:
         p = _run["proc"]
         if p is not None and p.poll() is None:
             return False, {"error": "a scrape is already running", "pid": p.pid}
         try:
             proc = subprocess.Popen(
-                cmd, cwd=str(ROOT), stdout=subprocess.PIPE,
+                config["cmd"], cwd=str(ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1,
             )
         except OSError as exc:
             return False, {"error": f"failed to launch scraper: {exc}"}
-        _run.update(proc=proc, cmd=cmd, cmd_str=cmd_str, niches=niche,
-                    max=max_leads, out_file=out, seeds=seeds,
-                    started_at=utcnow(), ended_at=None, exit_code=None,
-                    queries_seen=[])
-    _append_log(f"### START {utcnow().isoformat()} :: {cmd_str}")
+        _run.update(
+            proc=proc, cmd=config["cmd"], cmd_str=config["cmd_str"],
+            niches=config["niche"], max=config["max"], out_file=config["out"],
+            seeds=config["seeds"], started_at=utcnow(), ended_at=None,
+            exit_code=None, queries_seen=[],
+        )
+    _append_log(f"### START {utcnow().isoformat()} :: {config['cmd_str']}")
     t = threading.Thread(target=_reader, args=(proc,), daemon=True)
     t.start()
-    return True, {"pid": proc.pid, "cmd": cmd_str}
+    return True, {"pid": proc.pid, "cmd": config["cmd_str"]}
 
 
 def stop_run() -> dict:
+    if _serverless_runtime():
+        return {"ok": False, "error": "Hosted test scrapes run inside the request and cannot be stopped from another invocation."}
     with _lock:
         p = _run["proc"]
     if p is None or p.poll() is not None:

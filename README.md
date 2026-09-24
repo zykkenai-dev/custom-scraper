@@ -179,10 +179,11 @@ best practice, a separate `DASHBOARD_SESSION_SECRET` (the Supabase secret key
 is used as a fallback). All three hosted usernames use the single
 `DASHBOARD_PASSWORD` value. The password is never committed to Git.
 
-The hosted Vercel page is view-only for run controls: serverless invocations cannot
-safely keep a long-running scraper subprocess, progress log, or local output
-file alive. Run the CLI from the project computer for actual scraping; it can
-still save every result to Supabase.
+The hosted Vercel page supports a short synchronous test run from the
+dashboard (maximum 10 leads per niche). The request waits for the scraper to
+finish and writes its temporary output under `/tmp`; completed leads are saved
+to Supabase. This is not suitable for large or long-running jobs, which still
+need a durable worker/queue.
 
 ## API keys (optional)
 
