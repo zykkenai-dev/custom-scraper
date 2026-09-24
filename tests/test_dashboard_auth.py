@@ -74,7 +74,7 @@ def _post(opener, url, path, data, csrf=None):
 
 def test_routes_require_one_of_three_sessions_and_csrf(credentials, monkeypatch):
     calls = []
-    monkeypatch.setattr(server, "start_run", lambda opts: (calls.append(opts) or True, {"ok": True}))
+    monkeypatch.setattr(server, "start_run", lambda opts, requested_by="": (calls.append(opts) or True, {"ok": True}))
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     httpd.auth = auth.AuthStore(credentials)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)

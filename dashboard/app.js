@@ -57,7 +57,6 @@ async function submitRun() {
   if (state.loading || state.status?.running) return;
   const niches = selectedNiches();
   const max = Number($("r_max").value);
-  if (state.hostedTest && max > 10) return notice("Vercel test mode supports up to 10 leads per niche. Use a durable worker for larger runs.");
   const out = $("r_out").value.trim();
   const seeds = $("r_seeds").value.trim();
   if (!niches.length) return notice("Choose at least one industry.");
@@ -79,7 +78,10 @@ async function submitRun() {
     const response = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-    if (result.synchronous) {
+    if (result.queued) {
+      notice(result.message || "Scrape queued. The worker will process it shortly.", true);
+      state.lastLog = "";
+    } else if (result.synchronous) {
       notice(result.message || "Hosted test scrape completed.", true);
       state.lastLog = "";
     } else {
@@ -117,18 +119,18 @@ function renderStatus(status) {
   const failed = !running && status.exit_code !== null && status.exit_code !== 0;
   const finished = !running && status.exit_code === 0;
   $("connection").className = `connection ${running ? "running" : failed ? "error" : ""}`;
-  $("headerStatus").textContent = hosted ? "Hosted test mode" : running ? "Scraping now" : failed ? "Run needs attention" : "Local & ready";
+  $("headerStatus").textContent = hosted ? "Worker queue" : running ? "Scraping now" : failed ? "Run needs attention" : "Local & ready";
   $("hostedNotice").classList.toggle("hidden", !hostedTest);
-  $("runFootnote").textContent = hostedTest ? "Short test runs execute in this request" : "Runs locally on your machine";
+  $("runFootnote").textContent = hostedTest ? "Jobs are processed by the durable Supabase worker" : "Runs locally on your machine";
   $("runBadge").className = `run-state ${running ? "running" : failed ? "error" : "idle"}`;
   $("runBadge").lastElementChild.textContent = running ? "Running" : failed ? "Failed" : finished ? "Complete" : "Idle";
   $("activity").classList.toggle("running", running);
   const mode = status.seeds ? "seed list" : "web search";
-  $("runTitle").textContent = hosted ? "Run a short hosted test scrape" : running ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Last run complete" : "Ready when you are";
+  $("runTitle").textContent = hosted ? (running ? "Scrape queued with the worker" : "Ready for a hosted scrape") : running ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Last run complete" : "Ready when you are";
   const errorLine = (status.log_tail || []).slice().reverse().find((line) => /\| ERROR\s+\|/.test(line));
   const found = Number(status.leads_collected_log) || 0;
   $("runSummary").textContent = hosted
-    ? "This request runs the scraper synchronously for a small test (maximum 10 leads per niche). Results are saved to Supabase when configured."
+    ? (running ? "The durable worker is processing your request. Progress and completed leads will appear here." : failed ? (status.error || "The worker could not complete this scrape.") : finished ? `Saved ${found} real lead${found === 1 ? "" : "s"} to Supabase.` : "Queue a real scrape from this dashboard. The worker writes actual scraped leads to Supabase.")
     : running
     ? `Working through ${status.niches?.length || 1} industry selection${status.niches?.length === 1 ? "" : "s"} using ${mode}.`
     : failed ? (errorLine ? errorLine.split(" | ").slice(-1)[0] : `Exit code ${status.exit_code}. Open the run log for details.`)
@@ -143,10 +145,10 @@ function renderStatus(status) {
   $("metricProbed").textContent = status.candidates_probed || 0;
   $("metricSearches").textContent = status.searches || 0;
   $("metricFound").textContent = found;
-  $("runCurrent").textContent = hosted ? "Hosted test request is running synchronously" : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
+  $("runCurrent").textContent = hosted ? (running ? "Worker is processing the queued scrape" : "Ready to queue a scrape") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
   $("runTime").textContent = `${running ? "Elapsed" : "Last duration"} ${status.elapsed_s ? timeText(status.elapsed_s) : "—"}`;
   $("btnRun").disabled = running || state.loading;
-  $("btnRun").innerHTML = hostedTest ? "Run test scrape <span aria-hidden=\"true\">→</span>" : "Start scraping <span aria-hidden=\"true\">→</span>";
+  $("btnRun").innerHTML = hostedTest ? "Queue scrape <span aria-hidden=\"true\">→</span>" : "Start scraping <span aria-hidden=\"true\">→</span>";
   $("btnStop").disabled = !running;
   const lines = status.log_tail || [];
   const logText = lines.length ? lines.join("\n") : "No run output yet.";

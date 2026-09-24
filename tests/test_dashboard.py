@@ -128,34 +128,41 @@ class TestHostedOrigin:
         monkeypatch.setenv("DASHBOARD_ALLOWED_HOSTS", "dashboard.example.com")
         assert server._dashboard_host_allowed("dashboard.example.com") is True
 
-    def test_serverless_run_is_synchronous(self, monkeypatch):
+    def test_serverless_run_queues_a_real_job(self, monkeypatch):
         monkeypatch.setenv("VERCEL", "1")
         calls = []
 
-        class Completed:
-            stdout = "Done. Wrote 1 new leads\nSaved 1 leads to Supabase."
-            returncode = 0
+        def fake_create_job(options, requested_by):
+            calls.append((options, requested_by))
+            return "00000000-0000-0000-0000-000000000001"
 
-        def fake_run(cmd, **kwargs):
-            calls.append((cmd, kwargs))
-            return Completed()
-
-        monkeypatch.setattr(server.subprocess, "run", fake_run)
+        monkeypatch.setattr(server, "create_job", fake_create_job)
         ok, info = server.start_run({
-            "niche": ["real_estate"], "max": 1,
+            "niche": ["real_estate"], "max": 500,
             "out": "data/leads.csv", "fresh": True,
-        })
+        }, "tarun")
         assert ok is True
-        assert info["synchronous"] is True
-        assert info["exit_code"] == 0
-        assert calls[0][1]["timeout"] == server.HOSTED_TIMEOUT_SECONDS
-        assert calls[0][0][calls[0][0].index("--out") + 1].startswith("/tmp/")
+        assert info["queued"] is True
+        assert info["job_id"]
+        assert calls[0][0]["max_leads"] == 500
+        assert calls[0][1] == "tarun"
 
-    def test_serverless_run_rejects_large_test(self, monkeypatch):
-        monkeypatch.setenv("VERCEL", "1")
-        ok, info = server.start_run({"niche": ["real_estate"], "max": 11})
-        assert ok is False
-        assert "at most 10" in info["error"]
+    def test_serverless_status_maps_supabase_job(self, monkeypatch):
+        job = {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "status": "completed",
+            "requested_by": "tarun",
+            "options": {"niche": ["real_estate"], "max_leads": 500},
+            "log_tail": ["Done"],
+            "leads_saved": 12,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "finished_at": "2026-01-01T00:01:00+00:00",
+        }
+        status = server._hosted_status(job, "tarun")
+        assert status["job_status"] == "completed"
+        assert status["leads_collected_log"] == 12
+        assert status["niches"] == ["real_estate"]
+        assert status["max"] == 500
 
     def test_hosted_login_page_and_api_guard_without_local_auth(self, monkeypatch):
         monkeypatch.setenv("VERCEL", "1")

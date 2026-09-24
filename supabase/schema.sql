@@ -45,3 +45,24 @@ drop trigger if exists leads_set_updated_at on public.leads;
 create trigger leads_set_updated_at
 before update on public.leads
 for each row execute function public.set_leads_updated_at();
+
+-- Durable scrape jobs are created by the hosted dashboard and claimed by the
+-- GitHub Actions worker. The serverless function never owns a background job.
+create table if not exists public.scrape_jobs (
+    id uuid primary key default gen_random_uuid(),
+    status text not null default 'queued'
+        check (status in ('queued', 'running', 'completed', 'failed', 'cancelled')),
+    requested_by text not null default '',
+    options jsonb not null default '{}'::jsonb,
+    log_tail jsonb not null default '[]'::jsonb,
+    leads_saved integer not null default 0,
+    error text,
+    created_at timestamptz not null default now(),
+    started_at timestamptz,
+    finished_at timestamptz
+);
+
+create index if not exists scrape_jobs_status_created_idx
+    on public.scrape_jobs (status, created_at);
+
+alter table public.scrape_jobs enable row level security;

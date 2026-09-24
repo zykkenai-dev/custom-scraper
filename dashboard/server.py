@@ -23,7 +23,6 @@ import shlex
 import subprocess
 import sys
 import threading
-import uuid
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +31,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from dashboard.auth import AuthStore, HostedAuthStore, SESSION_SECONDS
+from output.supabase_jobs import (
+    SupabaseJobError,
+    cancel_job,
+    create_job,
+    fetch_leads,
+    get_job,
+    latest_job,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 DASH = Path(__file__).resolve().parent
@@ -41,8 +48,6 @@ KNOWN_NICHES = [
     "real_estate", "finance", "healthcare", "legal", "saas",
     "ecommerce", "coaching", "automotive", "hospitality",
 ]
-HOSTED_MAX_LEADS = 10
-HOSTED_TIMEOUT_SECONDS = 240
 
 # ---------------------------------------------------------------- state
 
@@ -357,6 +362,113 @@ def build_status() -> dict:
     }
 
 
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hosted_status(job: dict | None, requested_by: str = "") -> dict:
+    """Translate a Supabase job row into the dashboard status shape."""
+    if not job:
+        return {
+            "running": False,
+            "hosted": True,
+            "hosted_test_mode": True,
+            "run_supported": True,
+            "pid": None,
+            "niche": "-",
+            "niches": [],
+            "max": None,
+            "out_file": "Supabase",
+            "seeds": "",
+            "cmd": "",
+            "started_at": None,
+            "ended_at": None,
+            "exit_code": None,
+            "elapsed_s": 0.0,
+            "candidates_probed": 0,
+            "searches": 0,
+            "leads_found": 0,
+            "leads_total": 0,
+            "leads_collected_log": 0,
+            "per_niche": {},
+            "current_query": "",
+            "current_url": "",
+            "queries_seen": [],
+            "log_tail": [],
+            "log_lines": 0,
+            "source_file": "Supabase public.leads",
+            "leads_mtime": None,
+            "updated_at": utcnow().isoformat(),
+            "job_id": None,
+            "job_status": "idle",
+            "requested_by": requested_by,
+        }
+    options = job.get("options") if isinstance(job.get("options"), dict) else {}
+    status = str(job.get("status") or "queued")
+    logs = job.get("log_tail") if isinstance(job.get("log_tail"), list) else []
+    logs = [str(line) for line in logs][-500:]
+    started = _parse_timestamp(job.get("started_at") or job.get("created_at"))
+    ended = _parse_timestamp(job.get("finished_at"))
+    now = utcnow()
+    elapsed = 0.0
+    if started:
+        elapsed = ((ended or now) - started).total_seconds()
+    found = int(job.get("leads_saved") or 0)
+    running = status in {"queued", "running"}
+    failed = status in {"failed", "cancelled"}
+    completed = status == "completed"
+    niches = [str(n) for n in options.get("niche", []) if str(n)]
+    return {
+        "running": running,
+        "hosted": True,
+        "hosted_test_mode": True,
+        "run_supported": True,
+        "pid": None,
+        "niche": ", ".join(niches) or "-",
+        "niches": niches,
+        "max": options.get("max_leads"),
+        "out_file": "Supabase",
+        "seeds": options.get("seeds") or "",
+        "cmd": "Supabase worker",
+        "started_at": started.isoformat() if started else None,
+        "ended_at": ended.isoformat() if ended else None,
+        "exit_code": 0 if completed else 1 if failed else None,
+        "elapsed_s": round(max(0.0, elapsed), 1),
+        "candidates_probed": 0,
+        "searches": 0,
+        "leads_found": found,
+        "leads_total": found,
+        "leads_collected_log": found,
+        "per_niche": {},
+        "current_query": "",
+        "current_url": "",
+        "queries_seen": [],
+        "log_tail": logs,
+        "log_lines": len(logs),
+        "source_file": "Supabase public.leads",
+        "leads_mtime": ended.isoformat() if ended else None,
+        "updated_at": now.isoformat(),
+        "job_id": job.get("id"),
+        "job_status": status,
+        "requested_by": job.get("requested_by") or requested_by,
+        "error": job.get("error") or "",
+    }
+
+
+def build_hosted_status(job_id: str | None = None, requested_by: str = "") -> dict:
+    job = get_job(job_id) if job_id else latest_job(requested_by or None)
+    return _hosted_status(job, requested_by)
+
+
+def _hosted_leads() -> list[dict]:
+    return [_lead_from_any(row) for row in fetch_leads()]
+
+
 def _is_under(p: Path, root: Path) -> bool:
     try:
         p.relative_to(root)
@@ -518,7 +630,7 @@ def _resolve_niche_ids() -> list:
         return KNOWN_NICHES
 
 
-def _prepare_run(opts: dict, *, hosted: bool = False) -> tuple[dict | None, str | None]:
+def _prepare_run(opts: dict) -> tuple[dict | None, str | None]:
     """Validate dashboard options and build a safe scraper command."""
     niche_opts = _resolve_niche_ids()
     niche = opts.get("niche") or [niche_opts[0]]
@@ -529,20 +641,11 @@ def _prepare_run(opts: dict, *, hosted: bool = False) -> tuple[dict | None, str 
         max_leads = max(1, min(int(opts.get("max", 6)), 500))
     except (TypeError, ValueError):
         max_leads = 6
-    if hosted and max_leads > HOSTED_MAX_LEADS:
-        return None, (
-            f"Hosted test mode supports at most {HOSTED_MAX_LEADS} leads per niche. "
-            "Use the local CLI or a durable worker for larger runs."
-        )
 
     requested_out = str(opts.get("out") or "data/leads.csv").strip()
-    if hosted:
-        suffix = ".json" if Path(requested_out).suffix.lower() == ".json" else ".csv"
-        out = f"/tmp/lead-studio-{uuid.uuid4().hex}{suffix}"
-    else:
-        out = _output_path(requested_out)
-        if out is None:
-            return None, "output must be a .csv or .json file under data/ or output/"
+    out = _output_path(requested_out)
+    if out is None:
+        return None, "output must be a .csv or .json file under data/ or output/"
 
     seeds = str(opts.get("seeds") or "").strip()
     if seeds:
@@ -551,11 +654,11 @@ def _prepare_run(opts: dict, *, hosted: bool = False) -> tuple[dict | None, str 
             return None, "seeds must be an existing file under data/"
     try:
         workers = int(opts.get("workers") or 2)
-        workers = max(1, min(workers, 8 if not hosted else 2))
+        workers = max(1, min(workers, 8))
     except (TypeError, ValueError):
-        workers = 1 if hosted else 2
+        workers = 2
 
-    py = sys.executable if hosted else _resolve_python()
+    py = _resolve_python()
     cmd = [py, "-u", "main.py", "--niche", *niche, "--max", str(max_leads),
            "--out", out, "--workers", str(workers)]
     if seeds:
@@ -595,76 +698,45 @@ def _prepare_run(opts: dict, *, hosted: bool = False) -> tuple[dict | None, str 
     }, None
 
 
-def _text_output(value) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value or ""
+def _bounded_int(value, default: int, low: int, high: int) -> int:
+    try:
+        return max(low, min(int(value), high))
+    except (TypeError, ValueError):
+        return default
 
 
-def _start_hosted_run(opts: dict) -> tuple[bool, dict]:
-    """Run a short scrape synchronously inside a Vercel invocation.
-
-    This is intentionally a test-sized path: the request remains open until the
-    scraper exits, and the output is written to /tmp before Supabase persistence.
-    Long jobs still belong in a durable worker/queue.
-    """
-    config, error = _prepare_run(opts, hosted=True)
+def _enqueue_hosted_run(opts: dict, requested_by: str = "") -> tuple[bool, dict]:
+    """Persist a hosted dashboard request for the external worker."""
+    config, error = _prepare_run(opts)
     if error:
         return False, {"error": error}
     assert config is not None
-    started = utcnow()
-    with _lock:
-        p = _run["proc"]
-        if p is not None and p.poll() is None:
-            return False, {"error": "a scrape is already running", "pid": p.pid}
-        _run.update(
-            proc=None, cmd=config["cmd"], cmd_str=config["cmd_str"],
-            niches=config["niche"], max=config["max"], out_file=config["out"],
-            seeds=config["seeds"], started_at=started, ended_at=None,
-            exit_code=None, queries_seen=[],
-        )
-    _append_log(f"### START {started.isoformat()} :: {config['cmd_str']}")
-    try:
-        completed = subprocess.run(
-            config["cmd"], cwd=str(ROOT), stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, timeout=HOSTED_TIMEOUT_SECONDS,
-            check=False,
-        )
-        output = _text_output(completed.stdout)
-        code = int(completed.returncode)
-    except subprocess.TimeoutExpired as exc:
-        output = _text_output(exc.stdout)
-        code = 124
-    except OSError as exc:
-        output = f"Failed to launch scraper: {exc}"
-        code = 127
-
-    for line in output.splitlines()[-500:]:
-        _append_log(line)
-    with _lock:
-        _run["ended_at"] = utcnow()
-        _run["exit_code"] = code
-    _append_log(f"### EXIT code={code} at {utcnow().isoformat()}")
-    info = {
-        "synchronous": True,
-        "exit_code": code,
-        "cmd": config["cmd_str"],
-        "log_tail": output.splitlines()[-20:],
+    options = {
+        "niche": config["niche"],
+        "max_leads": config["max"],
+        "seeds": config["seeds"],
+        "workers": config["workers"],
+        "emails_only": bool(opts.get("emails_only")),
+        "min_quality": _bounded_int(opts.get("min_quality"), 0, 0, 100),
+        "max_quality": _bounded_int(opts.get("max_quality"), 100, 0, 100),
+        "no_enrich": bool(opts.get("no_enrich")),
+        "fresh": bool(opts.get("fresh")),
+        "no_merge": bool(opts.get("no_merge")),
     }
-    if code == 0:
-        info["message"] = "Hosted test scrape completed. Leads were saved to Supabase when configured."
-        return True, info
-    info["error"] = (
-        "Hosted test scrape timed out. Reduce the lead limit or use a durable worker."
-        if code == 124
-        else f"Hosted test scrape failed with exit code {code}."
-    )
-    return False, info
+    try:
+        job_id = create_job(options, requested_by)
+    except SupabaseJobError as exc:
+        return False, {"error": str(exc)}
+    return True, {
+        "queued": True,
+        "job_id": job_id,
+        "message": "Scrape queued. The worker will process it and save real leads to Supabase.",
+    }
 
 
-def start_run(opts: dict) -> tuple[bool, dict]:
+def start_run(opts: dict, requested_by: str = "") -> tuple[bool, dict]:
     if _serverless_runtime():
-        return _start_hosted_run(opts)
+        return _enqueue_hosted_run(opts, requested_by)
     config, error = _prepare_run(opts)
     if error:
         return False, {"error": error}
@@ -692,9 +764,15 @@ def start_run(opts: dict) -> tuple[bool, dict]:
     return True, {"pid": proc.pid, "cmd": config["cmd_str"]}
 
 
-def stop_run() -> dict:
+def stop_run(job_id: str | None = None) -> dict:
     if _serverless_runtime():
-        return {"ok": False, "error": "Hosted test scrapes run inside the request and cannot be stopped from another invocation."}
+        if not job_id:
+            return {"ok": False, "error": "No hosted scrape job is available to cancel."}
+        try:
+            cancel_job(job_id)
+        except SupabaseJobError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "running": False, "cancelled": True}
     with _lock:
         p = _run["proc"]
     if p is None or p.poll() is not None:
@@ -822,6 +900,14 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return ""
 
+    def _job_id(self) -> str:
+        try:
+            cookies = SimpleCookie()
+            cookies.load(self.headers.get("Cookie", ""))
+            return cookies["lead_job_id"].value if "lead_job_id" in cookies else ""
+        except Exception:
+            return ""
+
     def _auth(self):
         """Return the local auth store when the stdlib launcher attached one.
 
@@ -880,7 +966,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("login.html")
         if path in ("/login.css", "/login.js"):
             return self._static(path.lstrip("/"))
-        if not self._require_session(path.startswith("/api/") or path == "/export.csv"):
+        session = self._require_session(path.startswith("/api/") or path == "/export.csv")
+        if not session:
             return
         if path in ("/", "/index.html"):
             return self._static("index.html")
@@ -890,19 +977,38 @@ class Handler(BaseHTTPRequestHandler):
             session = self._session()
             return self._json({"username": session["username"], "csrf": session["csrf"]})
         if path == "/api/status":
+            if _serverless_runtime():
+                try:
+                    return self._json(build_hosted_status(self._job_id(), session["username"]))
+                except SupabaseJobError as exc:
+                    return self._json({"error": str(exc)}, 503)
             return self._json(build_status())
         if path == "/api/leads":
-            leads, src = load_leads()
+            if _serverless_runtime():
+                try:
+                    leads = _hosted_leads()
+                except SupabaseJobError as exc:
+                    return self._json({"error": str(exc)}, 503)
+                src = None
+            else:
+                leads, src = load_leads()
             niches = sorted({l["niche"] for l in leads if l["niche"]})
             return self._json({
                 "leads": leads, "total": len(leads),
-                "source_file": str(src.relative_to(ROOT)) if src and _is_under(src, ROOT)
-                else (str(src) if src else None),
+                "source_file": "Supabase public.leads" if _serverless_runtime()
+                else (str(src.relative_to(ROOT)) if src and _is_under(src, ROOT)
+                      else (str(src) if src else None)),
                 "niches": niches,
                 "updated_at": utcnow().isoformat(),
             })
         if path in ("/api/export.csv", "/export.csv"):
-            leads, _ = load_leads()
+            if _serverless_runtime():
+                try:
+                    leads = _hosted_leads()
+                except SupabaseJobError as exc:
+                    return self._json({"error": str(exc)}, 503)
+            else:
+                leads, _ = load_leads()
             only_published = parse_qs(urlparse(self.path).query).get("published_only") == ["1"]
             if only_published:
                 leads = [lead for lead in leads if lead["emails"] and lead["email_origin"] == "scraped"]
@@ -971,10 +1077,17 @@ class Handler(BaseHTTPRequestHandler):
         if opts is None:
             return
         if path == "/api/run":
-            ok, info = start_run(opts)
-            return self._json(info, 200 if ok else 409)
+            ok, info = start_run(opts, session["username"])
+            extra = {}
+            if ok and info.get("job_id"):
+                secure = "; Secure" if _serverless_runtime() else ""
+                extra["Set-Cookie"] = (
+                    f"lead_job_id={info['job_id']}; Path=/; HttpOnly{secure}; "
+                    "SameSite=Strict"
+                )
+            return self._json(info, 200 if ok else 409, extra)
         if path == "/api/stop":
-            return self._json(stop_run())
+            return self._json(stop_run(self._job_id() if _serverless_runtime() else None))
         return self._json({"error": "not found"}, 404)
 
 

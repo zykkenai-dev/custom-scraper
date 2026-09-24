@@ -179,11 +179,19 @@ best practice, a separate `DASHBOARD_SESSION_SECRET` (the Supabase secret key
 is used as a fallback). All three hosted usernames use the single
 `DASHBOARD_PASSWORD` value. The password is never committed to Git.
 
-The hosted Vercel page supports a short synchronous test run from the
-dashboard (maximum 10 leads per niche). The request waits for the scraper to
-finish and writes its temporary output under `/tmp`; completed leads are saved
-to Supabase. This is not suitable for large or long-running jobs, which still
-need a durable worker/queue.
+The hosted Vercel page queues real scrape jobs in Supabase. The scheduled
+GitHub Actions worker claims those jobs, runs the normal scraper (up to the
+requested 500-lead limit), and upserts the actual results into Supabase. The
+dashboard polls the durable job status and reads leads back from Supabase.
+
+To enable the worker, add these GitHub Actions repository secrets:
+
+- `SUPABASE_URL`
+- `SUPABASE_SECRET_KEY`
+- Optional scraper keys: `SERPAPI_KEY`, `SCRAPINGBEE_API_KEY`, `PROXY_LIST`
+
+The workflow runs every five minutes and can also be started manually from the
+GitHub Actions tab. Vercel never runs the long-lived scraper process itself.
 
 ## API keys (optional)
 
@@ -248,7 +256,8 @@ config/   settings (delays, retries, proxy list) + niche definitions
 core/     data model, extractors, networking, niche filter
 sources/  search clients, page fetcher, collection pipeline, social/email enrichment
 output/   CSV + JSON exporters + optional Supabase lead store
-supabase/ SQL schema for the optional leads table
+supabase/ SQL schema for the optional leads and job tables
+scripts/  durable GitHub Actions scrape worker
 utils/    proxy pool, host chunking helpers
 ```
 

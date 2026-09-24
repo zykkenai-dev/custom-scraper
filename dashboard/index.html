@@ -24,7 +24,7 @@
       <section class="surface setup-panel" aria-labelledby="setupTitle">
         <div class="section-heading"><div><p class="kicker">01 / SETUP</p><h2 id="setupTitle">New scrape</h2></div><span class="section-icon" aria-hidden="true">✦</span></div>
         <p class="section-intro">Choose a source, target industries, and how many leads to collect.</p>
-        <p id="hostedNotice" class="form-notice hidden" role="status">Vercel test mode runs a short scrape synchronously (maximum 10 leads per niche). Larger runs should use a durable worker.</p>
+        <p id="hostedNotice" class="form-notice hidden" role="status">This Vercel dashboard queues real scrape jobs for the durable worker. Results are saved to Supabase.</p>
         <div class="field-group"><span class="field-label">Where should we find websites?</span><div class="source-picker" role="group" aria-label="Website source">
           <button class="source-choice selected" id="modeSearch" type="button" aria-pressed="true"><span class="source-icon" aria-hidden="true">⌕</span><span><strong>Search the web</strong><small>Discover businesses by niche</small></span></button>
           <button class="source-choice" id="modeSeeds" type="button" aria-pressed="false"><span class="source-icon" aria-hidden="true">≡</span><span><strong>Use a seed list</strong><small>Scrape websites you provide</small></span></button>
