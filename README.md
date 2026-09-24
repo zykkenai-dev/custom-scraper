@@ -170,6 +170,12 @@ The secret key bypasses Row Level Security and must stay in a server environment
 never put it in `dashboard/app.js`, commit it, or send it through chat. No
 Supabase Auth setup is required for lead persistence.
 
+When deployed to Vercel, the handler accepts the platform's `*.vercel.app` host
+and still requires a same-origin request. If you attach a custom domain, add
+its hostname to the `DASHBOARD_ALLOWED_HOSTS` environment variable. The local
+three-account credential file is intentionally not deployed; public API routes
+remain protected until a hosted authentication provider is configured.
+
 ## API keys (optional)
 
 - **[SerpAPI]** — `SERPAPI_KEY`: higher-quality Google organic results and

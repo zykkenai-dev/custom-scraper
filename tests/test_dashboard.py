@@ -6,7 +6,8 @@ import io
 import threading
 from http.cookiejar import CookieJar
 from http.server import ThreadingHTTPServer
-from urllib.request import HTTPCookieProcessor, Request, build_opener
+from urllib.error import HTTPError
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 import pytest
 
@@ -107,6 +108,44 @@ class TestDashboardPaths:
     def test_remote_binding_rejected(self):
         with pytest.raises(ValueError, match="loopback"):
             server.serve(host="0.0.0.0", port=0)
+
+
+class TestHostedOrigin:
+    def test_vercel_host_requires_vercel_runtime(self, monkeypatch):
+        monkeypatch.delenv("VERCEL", raising=False)
+        monkeypatch.delenv("VERCEL_ENV", raising=False)
+        monkeypatch.delenv("VERCEL_URL", raising=False)
+        monkeypatch.delenv("VERCEL_PROJECT_PRODUCTION_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_ALLOWED_HOSTS", raising=False)
+        assert server._dashboard_host_allowed("project.vercel.app") is False
+        monkeypatch.setenv("VERCEL", "1")
+        assert server._dashboard_host_allowed("project.vercel.app") is True
+        assert server._dashboard_host_allowed("evil.example") is False
+
+    def test_custom_host_requires_explicit_allowlist(self, monkeypatch):
+        monkeypatch.delenv("DASHBOARD_ALLOWED_HOSTS", raising=False)
+        assert server._dashboard_host_allowed("dashboard.example.com") is False
+        monkeypatch.setenv("DASHBOARD_ALLOWED_HOSTS", "dashboard.example.com")
+        assert server._dashboard_host_allowed("dashboard.example.com") is True
+
+    def test_hosted_login_page_and_api_guard_without_local_auth(self, monkeypatch):
+        monkeypatch.setenv("VERCEL", "1")
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{httpd.server_port}"
+        headers = {"Host": "project.vercel.app"}
+        try:
+            with urlopen(Request(base + "/login", headers=headers), timeout=3) as response:
+                assert response.status == 200
+                assert b"Sign in to Lead Studio" in response.read()
+            with pytest.raises(HTTPError) as exc:
+                urlopen(Request(base + "/api/status", headers=headers), timeout=3)
+            assert exc.value.code == 401
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
 
 
 class TestParseLog:

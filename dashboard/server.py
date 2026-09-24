@@ -17,6 +17,7 @@ import csv
 import hmac
 import ipaddress
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -364,6 +365,52 @@ def _local_host(host: str) -> bool:
         return False
 
 
+def _host_from_value(value: str) -> str:
+    """Return a hostname from either ``host`` or a full URL value."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw if "://" in raw else "//" + raw)
+        return (parsed.hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _dashboard_host_allowed(host: str) -> bool:
+    """Allow loopback locally and explicitly trusted hosts when deployed.
+
+    Vercel function invocations do not pass through ``dashboard.serve()`` and
+    use a public ``*.vercel.app`` Host. Custom domains must be listed in
+    ``DASHBOARD_ALLOWED_HOSTS`` rather than allowing arbitrary public hosts.
+    """
+    normalized = (host or "").lower().rstrip(".")
+    if not normalized:
+        return False
+    if _local_host(normalized):
+        return True
+
+    configured = {
+        _host_from_value(item)
+        for item in os.getenv("DASHBOARD_ALLOWED_HOSTS", "").split(",")
+        if item.strip()
+    }
+    if normalized in configured:
+        return True
+
+    vercel_runtime = any(
+        os.getenv(name)
+        for name in ("VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
+    )
+    vercel_hosts = {
+        _host_from_value(os.getenv(name, ""))
+        for name in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
+    }
+    return vercel_runtime and (
+        normalized.endswith(".vercel.app") or normalized in vercel_hosts
+    )
+
+
 def _output_path(raw: str) -> str | None:
     """Dashboard runs may write only CSV/JSON files in data or output."""
     path = Path(raw)
@@ -597,15 +644,21 @@ class Handler(BaseHTTPRequestHandler):
     def _same_origin(self) -> bool:
         host = self.headers.get("Host", "")
         try:
-            host_name = urlparse("//" + host).hostname
+            host_name = urlparse("//" + host).hostname or ""
         except ValueError:
             return False
-        if not _local_host(host_name or ""):
+        if not _dashboard_host_allowed(host_name):
             return False
         origin = self.headers.get("Origin")
         if origin:
-            parsed = urlparse(origin)
-            return parsed.scheme in {"http", "https"} and parsed.netloc == host
+            try:
+                parsed = urlparse(origin)
+                return (
+                    parsed.scheme in {"http", "https"}
+                    and parsed.netloc.lower() == host.lower()
+                )
+            except ValueError:
+                return False
         return True
 
     # -- helpers
@@ -642,8 +695,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return ""
 
+    def _auth(self):
+        """Return the local auth store when the stdlib launcher attached one.
+
+        Vercel's BaseHTTPRequestHandler adapter does not call ``serve()`` and
+        therefore has no server-side auth attribute. Treat that as an
+        unauthenticated hosted instance rather than raising an AttributeError;
+        protected routes still return 401 and the login endpoint explains that
+        hosted authentication must be configured separately.
+        """
+        return getattr(getattr(self, "server", None), "auth", None)
+
     def _session(self) -> dict | None:
-        return self.server.auth.session(self._cookie_token())
+        auth = self._auth()
+        return auth.session(self._cookie_token()) if auth is not None else None
 
     def _require_session(self, api: bool) -> dict | None:
         session = self._session()
@@ -680,7 +745,7 @@ class Handler(BaseHTTPRequestHandler):
     # -- routes
     def do_GET(self):
         if not self._same_origin():
-            return self._json({"error": "local origin required"}, 403)
+            return self._json({"error": "request origin is not allowed"}, 403)
         path = urlparse(self.path).path
         if path == "/login":
             if self._session():
@@ -738,6 +803,8 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/api/login", "/api/logout", "/api/run", "/api/stop"):
             return self._json({"error": "not found"}, 404)
         if path == "/api/login":
+            if self._auth() is None:
+                return self._json({"error": "hosted dashboard authentication is not configured"}, 503)
             opts = self._read_json()
             if opts is None:
                 return
