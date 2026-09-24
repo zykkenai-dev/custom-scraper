@@ -23,8 +23,22 @@ jobs:
       - name: Process one queued scrape job
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
           SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
           PROXY_LIST: ${{ secrets.PROXY_LIST }}
+          SEARCH_COUNTRY: ${{ secrets.SEARCH_COUNTRY }}
+          REQUEST_DELAY_MIN: ${{ secrets.REQUEST_DELAY_MIN }}
+          REQUEST_DELAY_MAX: ${{ secrets.REQUEST_DELAY_MAX }}
+          TIMEOUT_SECONDS: ${{ secrets.TIMEOUT_SECONDS }}
+          MAX_CONCURRENT_REQUESTS: ${{ secrets.MAX_CONCURRENT_REQUESTS }}
+          MAX_RETRIES: ${{ secrets.MAX_RETRIES }}
+          USER_AGENT_ROTATE: ${{ secrets.USER_AGENT_ROTATE }}
+          RESPECT_ROBOTS: ${{ secrets.RESPECT_ROBOTS }}
+          VERIFY_EMAILS: ${{ secrets.VERIFY_EMAILS }}
+          INFER_EMAILS: ${{ secrets.INFER_EMAILS }}
+          FREE_JS_RENDER: ${{ secrets.FREE_JS_RENDER }}
+          CACHE_SEARCH: ${{ secrets.CACHE_SEARCH }}
+          CACHE_SEARCH_HOURS: ${{ secrets.CACHE_SEARCH_HOURS }}
+          SEARX_INSTANCES: ${{ secrets.SEARX_INSTANCES }}
         run: python scripts/supabase_worker.py

@@ -81,9 +81,6 @@ async function submitRun() {
     if (result.queued) {
       notice(result.message || "Scrape queued. The worker will process it shortly.", true);
       state.lastLog = "";
-    } else if (result.synchronous) {
-      notice(result.message || "Hosted test scrape completed.", true);
-      state.lastLog = "";
     } else {
       notice("Scrape started. Live activity and results will update below.", true);
     }

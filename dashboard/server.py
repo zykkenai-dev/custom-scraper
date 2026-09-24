@@ -462,11 +462,13 @@ def _hosted_status(job: dict | None, requested_by: str = "") -> dict:
 
 def build_hosted_status(job_id: str | None = None, requested_by: str = "") -> dict:
     job = get_job(job_id) if job_id else latest_job(requested_by or None)
+    if job and requested_by and job.get("requested_by") not in ("", requested_by):
+        job = latest_job(requested_by)
     return _hosted_status(job, requested_by)
 
 
 def _hosted_leads() -> list[dict]:
-    return [_lead_from_any(row) for row in fetch_leads()]
+    return [_lead_from_any(row) for row in fetch_leads(limit=5000)]
 
 
 def _is_under(p: Path, root: Path) -> bool:

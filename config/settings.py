@@ -11,7 +11,7 @@ load_dotenv()
 
 def _env_bool(key: str, default: bool = False) -> bool:
     val = os.getenv(key)
-    if val is None:
+    if val is None or not val.strip():
         return default
     return val.strip().lower() in ("1", "true", "yes", "on")
 
@@ -34,8 +34,8 @@ def _env_int(key: str, default: int) -> int:
 class ScraperSettings:
     """Runtime settings for the scraper engine."""
 
-    serpapi_key: str = os.getenv("SERPAPI_KEY", "")
-    scrapingbee_key: str = os.getenv("SCRAPINGBEE_API_KEY", "")
+    serpapi_key: str = os.getenv("SERPAPI_KEY", "") or ""
+    scrapingbee_key: str = os.getenv("SCRAPINGBEE_API_KEY", "") or ""
     proxies: list = field(
         default_factory=lambda: [
             p.strip()
@@ -50,7 +50,7 @@ class ScraperSettings:
     max_concurrent_requests: int = _env_int("MAX_CONCURRENT_REQUESTS", 4)
     user_agent_rotate: bool = _env_bool("USER_AGENT_ROTATE", True)
     max_retries: int = _env_int("MAX_RETRIES", 2)
-    search_country: str = os.getenv("SEARCH_COUNTRY", "us").strip().lower()
+    search_country: str = (os.getenv("SEARCH_COUNTRY") or "us").strip().lower() or "us"
     verify_emails: bool = _env_bool("VERIFY_EMAILS", True)
     respect_robots: bool = _env_bool("RESPECT_ROBOTS", True)
     # MX records cannot prove that a specific mailbox exists. Guessing is
@@ -63,10 +63,10 @@ class ScraperSettings:
     searx_instances: list = field(
         default_factory=lambda: [
             i.strip()
-            for i in os.getenv(
-                "SEARX_INSTANCES",
-                "https://searx.be,https://priv.au,https://search.bus-hit.me,"
-                "https://searx.tiekoetter.com,https://paulgo.io,https://search.hbubli.cc",
+            for i in (
+                os.getenv("SEARX_INSTANCES")
+                or "https://searx.be,https://priv.au,https://search.bus-hit.me,"
+                "https://searx.tiekoetter.com,https://paulgo.io,https://search.hbubli.cc"
             ).split(",")
             if i.strip()
         ]

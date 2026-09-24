@@ -189,6 +189,10 @@ To enable the worker, add these GitHub Actions repository secrets:
 - `SUPABASE_URL`
 - `SUPABASE_SECRET_KEY`
 - Optional scraper keys: `SERPAPI_KEY`, `SCRAPINGBEE_API_KEY`, `PROXY_LIST`
+- Optional tuning keys: `SEARCH_COUNTRY`, `REQUEST_DELAY_MIN`, `REQUEST_DELAY_MAX`,
+  `TIMEOUT_SECONDS`, `MAX_CONCURRENT_REQUESTS`, `MAX_RETRIES`,
+  `USER_AGENT_ROTATE`, `RESPECT_ROBOTS`, `VERIFY_EMAILS`, `INFER_EMAILS`,
+  `FREE_JS_RENDER`, `CACHE_SEARCH`, `CACHE_SEARCH_HOURS`, `SEARX_INSTANCES`
 
 The workflow runs every five minutes and can also be started manually from the
 GitHub Actions tab. Vercel never runs the long-lived scraper process itself.
