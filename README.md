@@ -173,8 +173,11 @@ Supabase Auth setup is required for lead persistence.
 When deployed to Vercel, the handler accepts the platform's `*.vercel.app` host
 and still requires a same-origin request. If you attach a custom domain, add
 its hostname to the `DASHBOARD_ALLOWED_HOSTS` environment variable. The local
-three-account credential file is intentionally not deployed; public API routes
-remain protected until a hosted authentication provider is configured.
+three-account credential file is intentionally not deployed. To enable the
+same three usernames on Vercel, set `DASHBOARD_PASSWORD` in Vercel and, for
+best practice, a separate `DASHBOARD_SESSION_SECRET` (the Supabase secret key
+is used as a fallback). All three hosted usernames use the single
+`DASHBOARD_PASSWORD` value. The password is never committed to Git.
 
 ## API keys (optional)
 

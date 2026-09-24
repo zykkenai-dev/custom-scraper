@@ -51,6 +51,20 @@ def test_login_rate_limit(credentials):
         store.login("tarun", "test-pass", "127.0.0.1")
 
 
+def test_hosted_auth_uses_environment_password_and_signed_session(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "test-pass")
+    monkeypatch.setenv("DASHBOARD_SESSION_SECRET", "s" * 48)
+    store = auth.HostedAuthStore.from_env()
+    assert store is not None
+    token, csrf = store.login("Tarun", "test-pass", "203.0.113.10")
+    session = store.session(token)
+    assert session["username"] == "tarun"
+    assert session["csrf"] == csrf
+    assert store.login("tarun", "wrong", "203.0.113.10") is None
+    assert store.session(token + "tampered") is None
+    store.revoke(token)  # stateless logout is handled by clearing the cookie
+
+
 def _post(opener, url, path, data, csrf=None):
     headers = {"Content-Type": "application/json"}
     if csrf:

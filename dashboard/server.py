@@ -29,7 +29,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from dashboard.auth import AuthStore, SESSION_SECONDS
+from dashboard.auth import AuthStore, HostedAuthStore, SESSION_SECONDS
 
 ROOT = Path(__file__).resolve().parent.parent
 DASH = Path(__file__).resolve().parent
@@ -58,6 +58,8 @@ _run = {
     "queries_seen": [],
 }
 _leads_override = {"path": None}  # set via --leads
+_hosted_auth: HostedAuthStore | None = None
+_hosted_auth_lock = threading.Lock()
 
 
 def utcnow() -> datetime:
@@ -411,6 +413,23 @@ def _dashboard_host_allowed(host: str) -> bool:
     )
 
 
+def _get_hosted_auth() -> HostedAuthStore | None:
+    """Build the stateless Vercel auth store once per warm function instance."""
+    if not any(
+        os.getenv(name)
+        for name in ("VERCEL", "VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL")
+    ):
+        return None
+    global _hosted_auth
+    with _hosted_auth_lock:
+        if _hosted_auth is None:
+            try:
+                _hosted_auth = HostedAuthStore.from_env()
+            except ValueError:
+                return None
+        return _hosted_auth
+
+
 def _output_path(raw: str) -> str | None:
     """Dashboard runs may write only CSV/JSON files in data or output."""
     path = Path(raw)
@@ -699,12 +718,12 @@ class Handler(BaseHTTPRequestHandler):
         """Return the local auth store when the stdlib launcher attached one.
 
         Vercel's BaseHTTPRequestHandler adapter does not call ``serve()`` and
-        therefore has no server-side auth attribute. Treat that as an
-        unauthenticated hosted instance rather than raising an AttributeError;
-        protected routes still return 401 and the login endpoint explains that
-        hosted authentication must be configured separately.
+        therefore has no local auth attribute. When DASHBOARD_PASSWORD (and a
+        session secret) are configured, use the stateless hosted store;
+        otherwise protected routes remain safely unavailable.
         """
-        return getattr(getattr(self, "server", None), "auth", None)
+        server_auth = getattr(getattr(self, "server", None), "auth", None)
+        return server_auth if server_auth is not None else _get_hosted_auth()
 
     def _session(self) -> dict | None:
         auth = self._auth()
@@ -798,12 +817,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._same_origin():
-            return self._json({"error": "local origin required"}, 403)
+            return self._json({"error": "request origin is not allowed"}, 403)
         path = urlparse(self.path).path
         if path not in ("/api/login", "/api/logout", "/api/run", "/api/stop"):
             return self._json({"error": "not found"}, 404)
         if path == "/api/login":
-            if self._auth() is None:
+            auth = self._auth()
+            if auth is None:
                 return self._json({"error": "hosted dashboard authentication is not configured"}, 503)
             opts = self._read_json()
             if opts is None:
@@ -812,21 +832,33 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(username, str) or not isinstance(password, str):
                 return self._json({"error": "invalid credentials"}, 401)
             try:
-                result = self.server.auth.login(username, password, self.client_address[0])
+                result = auth.login(username, password, self.client_address[0])
             except PermissionError:
                 return self._json({"error": "too many attempts; try again in 10 minutes"}, 429)
             if not result:
                 return self._json({"error": "invalid credentials"}, 401)
             token, _ = result
-            return self._json({"username": username.strip().lower()}, 200, {"Set-Cookie": f"lead_session={token}; Path=/; HttpOnly; SameSite=Strict"})
+            secure = "; Secure" if isinstance(auth, HostedAuthStore) else ""
+            return self._json(
+                {"username": username.strip().lower()},
+                200,
+                {"Set-Cookie": f"lead_session={token}; Path=/; HttpOnly{secure}; SameSite=Strict"},
+            )
         session = self._require_session(True)
         if not session:
             return
         if not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), session["csrf"]):
             return self._json({"error": "invalid request token"}, 403)
         if path == "/api/logout":
-            self.server.auth.revoke(self._cookie_token())
-            return self._json({"ok": True}, 200, {"Set-Cookie": "lead_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"})
+            auth = self._auth()
+            if auth is not None:
+                auth.revoke(self._cookie_token())
+            secure = "; Secure" if isinstance(auth, HostedAuthStore) else ""
+            return self._json(
+                {"ok": True},
+                200,
+                {"Set-Cookie": f"lead_session=; Path=/; HttpOnly{secure}; SameSite=Strict; Max-Age=0"},
+            )
         opts = self._read_json()
         if opts is None:
             return

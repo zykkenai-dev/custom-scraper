@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -133,3 +134,90 @@ class AuthStore:
     def revoke(self, token: str) -> None:
         with self.lock:
             self.sessions.pop(token, None)
+
+
+class HostedAuthStore:
+    """Stateless serverless auth backed by Vercel environment variables.
+
+    The shared password is never written to the repository or local user file.
+    A signed, expiring cookie keeps sessions valid across function instances.
+    """
+
+    def __init__(self, password: str, session_secret: str):
+        if not password:
+            raise ValueError("DASHBOARD_PASSWORD must not be empty")
+        if len(session_secret.encode("utf-8")) < 32:
+            raise ValueError("DASHBOARD_SESSION_SECRET must be at least 32 characters")
+        self.password = password.encode("utf-8")
+        self.session_secret = session_secret.encode("utf-8")
+
+    @classmethod
+    def from_env(cls) -> "HostedAuthStore | None":
+        password = os.getenv("DASHBOARD_PASSWORD", "")
+        if not password:
+            return None
+        session_secret = (
+            os.getenv("DASHBOARD_SESSION_SECRET", "")
+            or os.getenv("SUPABASE_SECRET_KEY", "")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        )
+        if not session_secret:
+            raise ValueError("DASHBOARD_SESSION_SECRET or SUPABASE_SECRET_KEY must be set")
+        return cls(password, session_secret)
+
+    @staticmethod
+    def _encode(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+    @staticmethod
+    def _decode(value: str) -> bytes:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+    def _signature(self, payload: str) -> str:
+        digest = hmac.new(
+            self.session_secret, payload.encode("ascii"), hashlib.sha256
+        ).digest()
+        return self._encode(digest)
+
+    def _issue(self, username: str) -> tuple[str, str]:
+        csrf = secrets.token_urlsafe(32)
+        payload = self._encode(json.dumps({
+            "username": username,
+            "csrf": csrf,
+            "expires": int(time.time() + SESSION_SECONDS),
+        }, separators=(",", ":")).encode("utf-8"))
+        return f"{payload}.{self._signature(payload)}", csrf
+
+    def _read(self, token: str) -> dict | None:
+        try:
+            payload, signature = token.split(".", 1)
+            if not hmac.compare_digest(signature, self._signature(payload)):
+                return None
+            data = json.loads(self._decode(payload))
+            if (
+                data.get("username") not in USERS
+                or not isinstance(data.get("csrf"), str)
+                or not isinstance(data.get("expires"), int)
+                or data["expires"] <= int(time.time())
+            ):
+                return None
+            return data
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def login(self, username: str, password: str, peer: str) -> tuple[str, str] | None:
+        del peer  # Vercel instances do not share a durable rate-limit store.
+        username = username.strip().lower()
+        if username not in USERS or not isinstance(password, str):
+            return None
+        if not hmac.compare_digest(password.encode("utf-8"), self.password):
+            return None
+        return self._issue(username)
+
+    def session(self, token: str) -> dict | None:
+        return self._read(token) if token else None
+
+    def revoke(self, token: str) -> None:
+        # Stateless cookies are invalidated by clearing the cookie. Rotating
+        # DASHBOARD_PASSWORD or DASHBOARD_SESSION_SECRET invalidates all tokens.
+        del token
