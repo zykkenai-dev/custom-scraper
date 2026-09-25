@@ -54,8 +54,8 @@ def main(argv=None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     url = f"http://{args.host}:{args.port}/"
-    print(f"\n  Lead Scraper dashboard  →  {url}")
-    print(f"  interpreter             →  {sys.executable}")
+    print(f"\n  Lead Scraper dashboard  ->  {url}")
+    print(f"  interpreter             ->  {sys.executable}")
     print("  Press Ctrl+C to stop.\n", flush=True)
 
     if not args.no_open:
