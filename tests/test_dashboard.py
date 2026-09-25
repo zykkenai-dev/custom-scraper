@@ -174,7 +174,15 @@ class TestHostedOrigin:
         try:
             with urlopen(Request(base + "/login", headers=headers), timeout=3) as response:
                 assert response.status == 200
-                assert b"Sign in to Lead Studio" in response.read()
+                body = response.read()
+                assert b"Sign in to Lead Studio" in body
+                assert b'https://custom-scraper-three.vercel.app/share-preview.jpg' in body
+            with urlopen(Request(base + "/share-preview.jpg", headers=headers), timeout=3) as response:
+                assert response.headers["Content-Type"] == "image/jpeg"
+                assert response.read(2) == b"\xff\xd8"
+            with urlopen(Request(base + "/share-preview.jpg", headers=headers, method="HEAD"), timeout=3) as response:
+                assert response.status == 200
+                assert response.headers["Content-Length"] == str((server.DASH / "share-preview.jpg").stat().st_size)
             with pytest.raises(HTTPError) as exc:
                 urlopen(Request(base + "/api/status", headers=headers), timeout=3)
             assert exc.value.code == 401

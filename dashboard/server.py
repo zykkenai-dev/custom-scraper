@@ -845,7 +845,8 @@ def load_persisted_log() -> None:
 
 MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".js": "text/javascript; charset=utf-8", ".json": "application/json",
-        ".csv": "text/csv; charset=utf-8"}
+        ".csv": "text/csv; charset=utf-8", ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1042,7 +1043,7 @@ class Handler(BaseHTTPRequestHandler):
             if self._session():
                 return self._send(303, b"", "text/plain", {"Location": "/"})
             return self._static("login.html")
-        if path in ("/login.css", "/login.js"):
+        if path in ("/login.css", "/login.js", "/theme.js", "/share-preview.jpg"):
             return self._static(path.lstrip("/"))
         session = self._require_session(path.startswith("/api/") or path == "/export.csv")
         if not session:
@@ -1106,6 +1107,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, raw, "text/csv; charset=utf-8",
                               {"Content-Disposition": 'attachment; filename="leads.csv"'})
         return self._json({"error": "not found"}, 404)
+
+    def do_HEAD(self):
+        self.do_GET()
 
     def do_POST(self):
         if not self._same_origin():
