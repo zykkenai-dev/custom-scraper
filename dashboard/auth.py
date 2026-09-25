@@ -33,7 +33,8 @@ def _write_users(path: Path, users: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=".dashboard-users-", dir=path.parent)
     try:
-        os.fchmod(fd, 0o600)
+        if os.name != "nt":
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             json.dump({"users": users}, out, indent=2)
             out.write("\n")
