@@ -131,7 +131,7 @@ function renderStatus(status) {
   const errorLine = (status.log_tail || []).slice().reverse().find((line) => /\| ERROR\s+\|/.test(line));
   const found = Number(status.leads_collected_log) || 0;
   $("runSummary").textContent = hosted
-    ? (starting ? "The scraper is starting now. You can leave this page open and leads will appear automatically." : scraping ? "Websites are being searched and checked now. Completed leads will appear below." : failed ? (status.error || "The scraper could not complete this run.") : finished ? `Saved ${found} real lead${found === 1 ? "" : "s"}. Review them below.` : "Choose your options and press Start scraping. Real leads will appear below automatically.")
+    ? (starting ? "The scraper is starting now. You can leave this page open and leads will appear automatically." : scraping ? "Websites are being searched and checked now. Completed leads will appear below." : failed ? (status.error || "The scraper could not complete this run.") : finished ? (found ? `Saved ${found} real lead${found === 1 ? "" : "s"}. Review them below.` : "No leads were found by web search. Try Use a seed list to scrape known websites directly.") : "Choose your options and press Start scraping. Real leads will appear below automatically.")
     : running
     ? `Working through ${status.niches?.length || 1} industry selection${status.niches?.length === 1 ? "" : "s"} using ${mode}.`
     : failed ? (errorLine ? errorLine.split(" | ").slice(-1)[0] : `Exit code ${status.exit_code}. Open the run log for details.`)

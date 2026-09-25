@@ -213,7 +213,7 @@ def run_watch(watch_seconds: int, poll_seconds: int) -> int:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        if code == -1:
+        if code != 0:
             time.sleep(min(poll_seconds, remaining))
     print("Worker watch window finished.", flush=True)
     return 1 if failures else 0
