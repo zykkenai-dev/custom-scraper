@@ -35,6 +35,10 @@ class ScraperSettings:
     """Runtime settings for the scraper engine."""
 
     serpapi_key: str = os.getenv("SERPAPI_KEY", "") or ""
+    # SerpApi is a last-resort search provider. Keep a monthly reserve and a
+    # per-process ceiling so the free allowance cannot be drained by one job.
+    serpapi_reserve: int = _env_int("SERPAPI_RESERVE", 25)
+    serpapi_max_per_run: int = _env_int("SERPAPI_MAX_PER_RUN", 4)
     scrapingbee_key: str = os.getenv("SCRAPINGBEE_API_KEY", "") or ""
     proxies: list = field(
         default_factory=lambda: [

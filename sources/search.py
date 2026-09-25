@@ -9,6 +9,7 @@ The collector uses `title` to verify engine results are actually relevant
 import base64
 import logging
 import random
+import threading
 import time
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -20,6 +21,7 @@ from config.settings import ScraperSettings
 logger = logging.getLogger(__name__)
 
 SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
+SERPAPI_ACCOUNT_ENDPOINT = "https://serpapi.com/account.json"
 SCRAPINGBEE_ENDPOINT = "https://app.scrapingbee.com/api/v1/"
 
 # Engine lookups fail fast: a blocked engine punishes per-request retries,
@@ -55,15 +57,27 @@ class SearchClient:
         self._api_key = settings.serpapi_key
         self._available = bool(self._api_key)
         self._session = requests.Session()
+        self._used_this_run = 0
+        self._lock = threading.Lock()
 
     @property
     def available(self) -> bool:
         return self._available
 
     def search(self, query: str, num: int = 10, engine: str = "google") -> list:
-        """Return deduped organic results as [{"url", "title"}, ...]."""
+        """Return organic results while preserving the configured free quota."""
         if not self._available:
             logger.info("SerpAPI key missing; skipping search for %r", query)
+            return []
+        with self._lock:
+            return self._search_with_budget(query, num, engine)
+
+    def _search_with_budget(self, query: str, num: int, engine: str) -> list:
+        per_run = max(0, self._settings.serpapi_max_per_run)
+        if self._used_this_run >= per_run:
+            logger.warning("SerpAPI per-run fallback budget reached (%d); using free engines only", per_run)
+            return []
+        if not self._quota_available():
             return []
         params = {
             "q": query,
@@ -75,11 +89,20 @@ class SearchClient:
         }
         try:
             resp = self._session.get(SERPAPI_ENDPOINT, params=params, timeout=30)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise SerpAPIError(f"HTTP {resp.status_code}")
             data = resp.json()
-        except Exception as exc:  # noqa: BLE001
-            logger.error("SerpAPI request failed: %s", exc)
-            raise SerpAPIError(str(exc)) from exc
+            if data.get("error"):
+                raise SerpAPIError("API returned an error")
+        except (requests.RequestException, ValueError, SerpAPIError) as exc:
+            # Never include the request URL in logs because it carries the key.
+            detail = str(exc) if isinstance(exc, SerpAPIError) else type(exc).__name__
+            logger.error("SerpAPI request failed: %s", detail)
+            raise SerpAPIError(detail) from exc
+
+        # SerpApi counts successful responses even when organic_results is
+        # empty, so account for the call before parsing its payload.
+        self._used_this_run += 1
 
         results: list[dict] = []
         for item in data.get("organic_results", []):
@@ -88,6 +111,28 @@ class SearchClient:
             if link.startswith("http"):
                 results.append({"url": link, "title": title})
         return _dedupe_results(results)
+
+    def _quota_available(self) -> bool:
+        """Check SerpApi's free Account API before spending a search credit."""
+        try:
+            resp = self._session.get(
+                SERPAPI_ACCOUNT_ENDPOINT,
+                params={"api_key": self._api_key},
+                timeout=10,
+            )
+            if resp.status_code >= 400:
+                logger.warning("SerpAPI quota check returned HTTP %s; preserving quota", resp.status_code)
+                return False
+            data = resp.json()
+            remaining = int(data.get("plan_searches_left", data.get("total_searches_left", 0)))
+        except (requests.RequestException, ValueError, TypeError):
+            logger.warning("SerpAPI quota check failed; preserving quota")
+            return False
+        reserve = max(0, self._settings.serpapi_reserve)
+        if remaining <= reserve:
+            logger.warning("SerpAPI monthly reserve reached (%d searches left); using free engines only", remaining)
+            return False
+        return True
 
 
 class DuckDuckGoClient:

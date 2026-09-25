@@ -25,6 +25,8 @@ jobs:
           WORKER_API_URL: ${{ vars.WORKER_API_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
           SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          SERPAPI_RESERVE: ${{ vars.SERPAPI_RESERVE }}
+          SERPAPI_MAX_PER_RUN: ${{ vars.SERPAPI_MAX_PER_RUN }}
           SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
           PROXY_LIST: ${{ secrets.PROXY_LIST }}
           SEARCH_COUNTRY: ${{ secrets.SEARCH_COUNTRY }}

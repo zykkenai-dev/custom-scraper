@@ -125,6 +125,62 @@ def test_no_discovery_is_reported_as_failure(real_estate_niche):
         source.collect(real_estate_niche)
 
 
+def test_free_search_is_used_before_serpapi(real_estate_niche):
+    source = SearchSource.__new__(SearchSource)
+    source.settings = SimpleNamespace(cache_search=False)
+    source._load_cached = lambda _query: []
+    source._save_cache = lambda _query, _urls: None
+
+    class Engine:
+        available = True
+
+        def __init__(self, results):
+            self.results = results
+            self.calls = 0
+
+        def search(self, *_args, **_kwargs):
+            self.calls += 1
+            return self.results
+
+    free = Engine([{"url": "https://acmerealty.example", "title": "Acme real estate brokerage"}])
+    paid = Engine([{"url": "https://paid.example", "title": "Paid real estate result"}])
+    source.free_engines = [free]
+    source.search = paid
+
+    results = source._discover("real estate", niche=real_estate_niche)
+    assert results[0]["url"] == "https://acmerealty.example"
+    assert free.calls == 1
+    assert paid.calls == 0
+
+
+def test_serpapi_is_last_resort(real_estate_niche):
+    source = SearchSource.__new__(SearchSource)
+    source.settings = SimpleNamespace(cache_search=False)
+    source._load_cached = lambda _query: []
+    source._save_cache = lambda _query, _urls: None
+
+    class Engine:
+        available = True
+
+        def __init__(self, results):
+            self.results = results
+            self.calls = 0
+
+        def search(self, *_args, **_kwargs):
+            self.calls += 1
+            return self.results
+
+    free = Engine([])
+    paid = Engine([{"url": "https://acmerealty.example", "title": "Acme real estate brokerage"}])
+    source.free_engines = [free]
+    source.search = paid
+
+    results = source._discover("real estate", niche=real_estate_niche)
+    assert results[0]["url"] == "https://acmerealty.example"
+    assert free.calls == 1
+    assert paid.calls == 1
+
+
 def test_js_shell_uses_rendered_text_for_scope(real_estate_niche):
     source = SearchSource.__new__(SearchSource)
     source.settings = SimpleNamespace(free_js_render=True, infer_emails=False)

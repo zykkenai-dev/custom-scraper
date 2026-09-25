@@ -204,8 +204,10 @@ GitHub Actions tab. Vercel never runs the long-lived scraper process itself.
 
 ## API keys (optional)
 
-- **[SerpAPI]** — `SERPAPI_KEY`: higher-quality Google organic results and
-  bigger rate limits. Auto-used when set, else falls back to DuckDuckGo.
+- **[SerpAPI]** — `SERPAPI_KEY`: quota-protected backup after the cached and
+  free search engines fail. `SERPAPI_RESERVE` defaults to 25 searches and
+  `SERPAPI_MAX_PER_RUN` defaults to 4, so one job cannot drain the free plan.
+  The free Account API is checked before every paid search.
 - **[ScrapingBee]** — `SCRAPINGBEE_API_KEY`: renders JS-heavy sites so
   contacts behind JavaScript are still parsed, and enables premium proxies
   automatically.

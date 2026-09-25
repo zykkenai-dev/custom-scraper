@@ -76,9 +76,8 @@ _CACHE_DIR = os.path.join("data", "cache")
 class SearchSource:
     """Discover business websites via search and harvest their contacts.
 
-    Engine selection: SerpAPI when its key is configured, then free engines
-    (Bing, DuckDuckGo) in fallback order — so scraping works with zero API
-    keys even when one engine bot-checks the IP.
+    Engine selection: cached results, then free engines, then SerpAPI as a
+    quota-protected last resort when every free source is blocked or junk.
     """
 
     def __init__(self, settings: ScraperSettings, *, enrich: bool = True):
@@ -117,7 +116,7 @@ class SearchSource:
         self._worker_ctx = threading.local()
 
     def _discover(self, query: str, num: int = 10, niche: Niche | None = None) -> list:
-        """Try paid engine first, then each free engine until results.
+        """Try cache and free engines before the quota-protected paid fallback.
 
         Search results are cached to disk (per query). A *fresh* cache (a
         week old at most) means we only probe a couple of engines for new
@@ -131,9 +130,9 @@ class SearchSource:
         those.
         """
         cached = self._clean_candidates(self._load_cached(query)) if self.settings.cache_search else []
-        cached_fresh = bool(self._is_cache_fresh(query))
+        cached_fresh = bool(cached and self._is_cache_fresh(query))
 
-        if not self.search.available and cached and cached_fresh:
+        if cached and cached_fresh:
             # Fresh cache: reuse banked results without touching engines at all.
             # Engines are bot-blocked or connect-blocked from this network, and
             # probing them fresh costs 20-80s of timeouts per query for zero
@@ -142,16 +141,7 @@ class SearchSource:
                 logger.info("Using cached results for %r (%d urls)", query, len(cached))
                 return list(cached)
             logger.info("Cached results for %r fail niche relevance; re-probing", query)
-
-        if self.search.available:
-            try:
-                urls = self.search.search(query, num=num)
-                if urls:
-                    urls = self._clean_candidates(_dedupe_urls(cached + urls))
-                    self._save_cache(query, urls)
-                    return urls
-            except Exception as exc:  # noqa: BLE001
-                logger.error("SerpAPI failed (%s); falling back to free engines", exc)
+            cached = []
         live = []
         for engine in self.free_engines:
             try:
@@ -169,6 +159,17 @@ class SearchSource:
                 break
             logger.warning("Engine %s returned off-topic results for %r; failing over",
                            type(engine).__name__, query)
+
+        if not live and self.search.available:
+            logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
+            try:
+                paid = self._clean_candidates(self.search.search(query, num=num))
+                if paid and (niche is None or _results_relevant(paid, niche)):
+                    live = paid
+                elif paid:
+                    logger.warning("SerpAPI returned off-topic results for %r", query)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("SerpAPI fallback failed: %s", exc)
         merged = self._clean_candidates(_dedupe_urls(cached + live))
         if live or cached:
             self._save_cache(query, merged)
