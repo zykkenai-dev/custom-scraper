@@ -146,9 +146,12 @@ def run_dry_run(settings) -> int:
     print("Dry run: validating configuration and pipeline wiring...\n")
 
     print(f"[config] settings loaded.............. {'OK' if True else 'FAIL'}")
-    serpapi_note = "YES" if settings.has_serpapi else "NO (free Bing/DDG/Mojeek will auto-fallback)"
+    serpapi_note = (
+        f"YES (backup; reserve {settings.serpapi_reserve}, max {settings.serpapi_max_per_run}/run)"
+        if settings.has_serpapi else "NO (free search engines remain available)"
+    )
     print(f"[config] SerpAPI key................. {serpapi_note}")
-    sb_note = "YES" if settings.has_scrapingbee else "NO (JS rendering off; plain fetch still works)"
+    sb_note = "YES" if settings.has_scrapingbee else "NO (plain fetch + free renderer remain available)"
     print(f"[config] ScrapingBee key............. {sb_note}")
     print(f"[config] proxies configured........... {'YES' if settings.has_proxies else 'NO (optional)'}")
 
@@ -228,7 +231,11 @@ def main(argv=None) -> int:
     if args.seeds:
         print("Using provided seed URLs for discovery.")
     elif settings.has_serpapi:
-        print("Using SerpAPI for discovery (key found).")
+        print(
+            "Using free search engines first; SerpAPI is a quota-protected "
+            f"backup (reserve {settings.serpapi_reserve}, max "
+            f"{settings.serpapi_max_per_run}/run)."
+        )
     else:
         print("Using free Bing + DuckDuckGo + Mojeek discovery (no keys required).")
     if settings.has_scrapingbee:
