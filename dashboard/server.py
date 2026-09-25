@@ -41,7 +41,7 @@ from output.supabase_jobs import (
     latest_job,
     update_job,
 )
-from output.supabase_store import SupabaseStoreError, save_lead_dicts
+from output.supabase_store import SupabaseStoreError, purge_denied_leads, save_lead_dicts
 
 ROOT = Path(__file__).resolve().parent.parent
 DASH = Path(__file__).resolve().parent
@@ -986,7 +986,8 @@ class Handler(BaseHTTPRequestHandler):
             return True
         try:
             if path == "/api/worker/claim":
-                return self._json({"job": claim_next_job()}) or True
+                purged = purge_denied_leads()
+                return self._json({"job": claim_next_job(), "purged": purged}) or True
 
             job_id = opts.get("job_id")
             job = get_job(job_id)

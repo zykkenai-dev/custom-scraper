@@ -7,8 +7,14 @@ from output import supabase_store
 
 
 class Response:
+    def __init__(self, payload=None):
+        self.payload = payload
+
     def raise_for_status(self):
         return None
+
+    def json(self):
+        return self.payload
 
 
 def test_not_configured_is_a_noop(monkeypatch):
@@ -85,3 +91,25 @@ def test_worker_dicts_are_validated_through_lead_model(monkeypatch):
     assert captured[0].business_name == "Acme"
     assert captured[0].quality_score == 17
     assert not hasattr(captured[0], "unexpected")
+
+
+def test_purge_denied_leads(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test")
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(("get", url, kwargs))
+        return Response([
+            {"id": 10, "website": "https://www.estatesale.com/companies/WA/Seattle"},
+            {"id": 11, "website": "https://acmerealty.example"},
+        ])
+
+    def fake_delete(url, **kwargs):
+        calls.append(("delete", url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(supabase_store.requests, "get", fake_get)
+    monkeypatch.setattr(supabase_store.requests, "delete", fake_delete)
+    assert supabase_store.purge_denied_leads() == 1
+    assert calls[1][2]["params"] == {"id": "in.(10)"}

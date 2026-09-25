@@ -37,6 +37,9 @@ class TestUrlDeny:
         assert url_is_denied("https://remax.com/agent/smith")
         assert url_is_denied("https://indeed.com/cmp/acme")
 
+    def test_estate_sale_directory_is_denied(self):
+        assert url_is_denied("https://www.estatesale.com/companies/WA/Seattle")
+
 
 class TestNameDeny:
     def test_mega_brand(self):
@@ -90,6 +93,10 @@ class TestValidCandidate:
 
     def test_exclusion_keyword_rejected(self, real_estate_niche):
         text = "Local real estate listings for for sale by owner transactions."
+        assert not is_valid_candidate_lead(text, real_estate_niche)
+
+    def test_estate_liquidation_business_rejected(self, real_estate_niche):
+        text = "Estate Sales Seattle offers estate liquidation and property services."
         assert not is_valid_candidate_lead(text, real_estate_niche)
 
     def test_scope_optional_when_require_scope_false(self, real_estate_niche):

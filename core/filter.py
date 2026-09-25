@@ -109,7 +109,7 @@ DENY_HOSTS = {
     "justdial.com", "sulekha.com", "urbanpro.com", "indiaMART.com",
     "indiamart.com", "tradeindia.com", "exportersindia.com",
     # Property / estate-sale portals observed polluting real-estate queries
-    "sasteghar.com", "propertywala.com", "estatesales.net",
+    "sasteghar.com", "propertywala.com", "estatesale.com", "estatesales.net",
     "homesandland.com", "estatesales.org", "listingvine.com",
     "edgeprop.sg", "99.co", "fazwaz.sg", "hoihup.com",
     # Big brokerage franchises / corporate real-estate (not boutique clients)

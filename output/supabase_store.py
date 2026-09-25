@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from core.filter import url_is_denied
 from core.models import Lead
 
 
@@ -160,3 +161,51 @@ def save_lead_dicts(items: Iterable[dict[str, Any]], *, timeout: float = 20.0) -
             scraped_at=text(item.get("scraped_at"), 100),
         ))
     return save_leads(leads, timeout=timeout)
+
+
+def purge_denied_leads(*, timeout: float = 20.0) -> int:
+    """Delete stored rows whose website now matches the central deny rules.
+
+    Search engines change continuously and a domain can be identified as a
+    directory or portal after it was first stored. Running this before a
+    hosted worker claims its next job keeps the shared dataset consistent
+    with the current filters without exposing the Supabase key to the worker.
+    """
+    config = _config()
+    if config is None:
+        return 0
+    url, key = config
+    headers = {"apikey": key}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    endpoint = f"{url}/rest/v1/leads"
+    try:
+        response = requests.get(
+            endpoint,
+            params={"select": "id,website", "limit": "5000"},
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list):
+            raise TypeError("Supabase returned an invalid leads response")
+        ids = [
+            str(row["id"])
+            for row in rows
+            if isinstance(row, dict)
+            and str(row.get("id") or "").isdigit()
+            and url_is_denied(row.get("website") or "")
+        ]
+        if not ids:
+            return 0
+        response = requests.delete(
+            endpoint,
+            params={"id": f"in.({','.join(ids)})"},
+            headers={**headers, "Prefer": "return=minimal"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        raise SupabaseStoreError(f"Could not purge denied leads from Supabase: {exc}") from exc
+    return len(ids)
