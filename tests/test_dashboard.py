@@ -210,6 +210,8 @@ class TestHostedOrigin:
             assert exc.value.code == 401
             with post("/api/worker/claim", {}) as response:
                 assert json.load(response)["job"]["id"] == job_id
+            with post("/api/worker/status", {"job_id": job_id}) as response:
+                assert json.load(response)["status"] == "running"
             with post("/api/worker/leads", {"job_id": job_id, "leads": [{"website": "https://acme.example"}]}) as response:
                 assert json.load(response)["saved"] == 1
             with post("/api/worker/finish", {

@@ -21,7 +21,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from output.supabase_jobs import SupabaseJobError, claim_next_job, update_job  # noqa: E402
+from output.supabase_jobs import (  # noqa: E402
+    SupabaseJobError,
+    claim_next_job,
+    get_job,
+    update_job,
+)
 from output.exporter import load_leads  # noqa: E402
 
 import requests  # noqa: E402
@@ -29,6 +34,7 @@ import requests  # noqa: E402
 LOG_LIMIT = 80
 RUN_TIMEOUT_SECONDS = 18_000
 UPLOAD_BATCH_SIZE = 50
+CANCEL_POLL_SECONDS = 5
 
 
 def _as_list(value) -> list[str]:
@@ -117,6 +123,66 @@ def _finish_job(job_id: str, values: dict) -> None:
     update_job(job_id, values)
 
 
+def _job_cancelled(job_id: str) -> bool:
+    """Return whether the dashboard marked a running job as cancelled."""
+    if _remote_config() is not None:
+        return _remote_post("/api/worker/status", {"job_id": job_id}).get("status") == "cancelled"
+    job = get_job(job_id)
+    return bool(job and job.get("status") == "cancelled")
+
+
+def _stop_process(process: subprocess.Popen) -> str:
+    """Terminate a scraper child and return all output captured so far."""
+    if process.poll() is None:
+        process.terminate()
+    try:
+        output, _ = process.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output, _ = process.communicate()
+    return output or ""
+
+
+def _run_scraper(command: list[str], job_id: str) -> tuple[int, str, str | None, bool]:
+    """Run the scraper while honoring dashboard cancellation requests."""
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except OSError as exc:
+        return 127, str(exc), f"could not launch scraper: {exc}", False
+
+    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            output = _stop_process(process)
+            return 124, output, "scraper timed out", False
+        try:
+            output, _ = process.communicate(timeout=min(CANCEL_POLL_SECONDS, remaining))
+            code = int(process.returncode or 0)
+            try:
+                if _job_cancelled(job_id):
+                    return 130, output or "", "Cancelled from dashboard", True
+            except (SupabaseJobError, RuntimeError, requests.RequestException) as exc:
+                print(f"Could not check cancellation for job {job_id}: {exc}", file=sys.stderr)
+            error = None if code == 0 else f"scraper exited with code {code}"
+            return code, output or "", error, False
+        except subprocess.TimeoutExpired:
+            try:
+                cancelled = _job_cancelled(job_id)
+            except (SupabaseJobError, RuntimeError, requests.RequestException) as exc:
+                print(f"Could not check cancellation for job {job_id}: {exc}", file=sys.stderr)
+                cancelled = False
+            if cancelled:
+                output = _stop_process(process)
+                return 130, output, "Cancelled from dashboard", True
+
+
 def _upload_leads(job_id: str, out: str) -> int:
     if _remote_config() is None:
         return _saved_count("")
@@ -151,23 +217,11 @@ def run_one(idle_code: int = 0) -> int:
         out = str(Path(temp_dir) / "leads.json")
         command = _command(job, out)
         print(f"Claimed job {job_id}: {' '.join(command)}", flush=True)
-        try:
-            completed = subprocess.run(
-                command, cwd=str(ROOT), stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, timeout=RUN_TIMEOUT_SECONDS,
-                check=False,
-            )
-            output = completed.stdout or ""
-            code = int(completed.returncode)
-            error = None if code == 0 else f"scraper exited with code {code}"
-        except subprocess.TimeoutExpired as exc:
-            output = exc.stdout if isinstance(exc.stdout, str) else ""
-            code = 124
-            error = "scraper timed out"
-        except OSError as exc:
-            output = str(exc)
-            code = 127
-            error = f"could not launch scraper: {exc}"
+        code, output, error, cancelled = _run_scraper(command, job_id)
+
+        if cancelled:
+            print(f"Cancelled job {job_id}; scraper process stopped.", flush=True)
+            return 0
 
         saved = 0
         if code == 0 and _remote_config() is not None:

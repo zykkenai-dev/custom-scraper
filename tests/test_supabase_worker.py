@@ -1,5 +1,7 @@
 """Tests for the remote GitHub Actions worker transport."""
 
+import sys
+
 from core.models import Lead
 from output.exporter import export_leads
 from scripts import supabase_worker
@@ -36,3 +38,30 @@ def test_watch_keeps_polling_until_deadline(monkeypatch):
 
     assert supabase_worker.run_watch(2, 1) == 0
     assert sleeps == [1]
+
+
+def test_remote_cancel_status(monkeypatch):
+    monkeypatch.setattr(
+        supabase_worker,
+        "_remote_post",
+        lambda path, payload: {"status": "cancelled"},
+    )
+    monkeypatch.setattr(
+        supabase_worker,
+        "_remote_config",
+        lambda: ("https://dashboard.example", "x" * 32),
+    )
+    assert supabase_worker._job_cancelled("job-1") is True
+
+
+def test_running_scraper_stops_when_cancelled(monkeypatch):
+    monkeypatch.setattr(supabase_worker, "CANCEL_POLL_SECONDS", 0.05)
+    monkeypatch.setattr(supabase_worker, "_job_cancelled", lambda _job_id: True)
+    code, output, error, cancelled = supabase_worker._run_scraper(
+        [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(60)"],
+        "job-1",
+    )
+    assert code == 130
+    assert "started" in output
+    assert error == "Cancelled from dashboard"
+    assert cancelled is True

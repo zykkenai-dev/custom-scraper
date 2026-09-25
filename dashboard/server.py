@@ -976,7 +976,10 @@ class Handler(BaseHTTPRequestHandler):
         The worker never receives the Supabase key. It claims jobs and uploads
         validated JSON batches through this Vercel function instead.
         """
-        if path not in {"/api/worker/claim", "/api/worker/leads", "/api/worker/finish"}:
+        if path not in {
+            "/api/worker/claim", "/api/worker/status",
+            "/api/worker/leads", "/api/worker/finish",
+        }:
             return False
         if not self._worker_authorized():
             self._json({"error": "worker authorization required"}, 401)
@@ -993,6 +996,9 @@ class Handler(BaseHTTPRequestHandler):
             job = get_job(job_id)
             if not job:
                 self._json({"error": "scrape job was not found"}, 404)
+                return True
+            if path == "/api/worker/status":
+                self._json({"status": str(job.get("status") or "")})
                 return True
             if job.get("status") != "running":
                 self._json({"error": "scrape job is not running"}, 409)
