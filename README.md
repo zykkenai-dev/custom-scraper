@@ -180,14 +180,19 @@ is used as a fallback). All three hosted usernames use the single
 `DASHBOARD_PASSWORD` value. The password is never committed to Git.
 
 The hosted Vercel page queues real scrape jobs in Supabase. The scheduled
-GitHub Actions worker claims those jobs, runs the normal scraper (up to the
-requested 500-lead limit), and upserts the actual results into Supabase. The
-dashboard polls the durable job status and reads leads back from Supabase.
+GitHub Actions worker claims those jobs through a token-protected endpoint,
+runs the normal scraper (up to the requested 500-lead limit), and uploads
+validated result batches back through Vercel. The Supabase secret stays in
+Vercel instead of being copied into GitHub. The dashboard polls the durable
+job status and reads leads back from Supabase.
 
-To enable the worker, add these GitHub Actions repository secrets:
+To enable the worker, generate one random `WORKER_API_TOKEN` of at least 32
+characters and store the same value in Vercel and as a GitHub Actions
+repository secret. Set the repository variable `WORKER_API_URL` to the stable
+production dashboard URL.
 
-- `SUPABASE_URL`
-- `SUPABASE_SECRET_KEY`
+Optional GitHub Actions scraper secrets:
+
 - Optional scraper keys: `SERPAPI_KEY`, `SCRAPINGBEE_API_KEY`, `PROXY_LIST`
 - Optional tuning keys: `SEARCH_COUNTRY`, `REQUEST_DELAY_MIN`, `REQUEST_DELAY_MAX`,
   `TIMEOUT_SECONDS`, `MAX_CONCURRENT_REQUESTS`, `MAX_RETRIES`,

@@ -116,3 +116,47 @@ def save_leads(leads: Iterable[Lead], *, timeout: float = 20.0) -> int:
     except requests.RequestException as exc:
         raise SupabaseStoreError(f"Could not save leads to Supabase: {exc}") from exc
     return len(rows)
+
+
+def save_lead_dicts(items: Iterable[dict[str, Any]], *, timeout: float = 20.0) -> int:
+    """Validate worker JSON and persist it through the normal lead model.
+
+    Hosted workers submit their local JSON export to the Vercel function so
+    the Supabase secret remains in one place.  Rebuilding ``Lead`` objects
+    here prevents worker-controlled quality scores or unexpected columns from
+    being written directly to the database.
+    """
+
+    def text(value: Any, limit: int) -> str:
+        return str(value or "").strip()[:limit]
+
+    def values(value: Any, *, count: int = 100, limit: int = 512) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned = [text(item, limit) for item in value[:count]]
+        return [item for item in cleaned if item]
+
+    leads: list[Lead] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        website = text(item.get("website"), 2048)
+        if not website:
+            continue
+        origin = text(item.get("email_origin"), 20).lower()
+        if origin not in {"scraped", "inferred", "mixed"}:
+            origin = "scraped"
+        leads.append(Lead(
+            business_name=text(item.get("business_name"), 500) or "Unknown",
+            niche=text(item.get("niche"), 100),
+            website=website,
+            emails=values(item.get("emails")),
+            whatsapp_numbers=values(item.get("whatsapp_numbers")),
+            instagram_handles=values(item.get("instagram_handles")),
+            linkedin_urls=values(item.get("linkedin_urls"), limit=2048),
+            phones=values(item.get("phones")),
+            source_query=text(item.get("source_query"), 500),
+            email_origin=origin,
+            scraped_at=text(item.get("scraped_at"), 100),
+        ))
+    return save_leads(leads, timeout=timeout)

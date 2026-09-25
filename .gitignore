@@ -11,3 +11,5 @@ data/*.xlsx
 data/cache/
 .venv/
 venv/
+.vercel
+.env*

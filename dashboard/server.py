@@ -34,11 +34,14 @@ from dashboard.auth import AuthStore, HostedAuthStore, SESSION_SECONDS
 from output.supabase_jobs import (
     SupabaseJobError,
     cancel_job,
+    claim_next_job,
     create_job,
     fetch_leads,
     get_job,
     latest_job,
+    update_job,
 )
+from output.supabase_store import SupabaseStoreError, save_lead_dicts
 
 ROOT = Path(__file__).resolve().parent.parent
 DASH = Path(__file__).resolve().parent
@@ -48,6 +51,9 @@ KNOWN_NICHES = [
     "real_estate", "finance", "healthcare", "legal", "saas",
     "ecommerce", "coaching", "automotive", "hospitality",
 ]
+
+WORKER_BODY_LIMIT = 1024 * 1024
+WORKER_BATCH_LIMIT = 100
 
 # ---------------------------------------------------------------- state
 
@@ -935,7 +941,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(303, b"", "text/plain", {"Location": "/login"})
         return None
 
-    def _read_json(self) -> dict | None:
+    def _read_json(self, max_bytes: int = 4096) -> dict | None:
         if self.headers.get("Content-Type", "").split(";", 1)[0].lower() != "application/json":
             self._json({"error": "JSON content type required"}, 415)
             return None
@@ -944,7 +950,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self._json({"error": "invalid content length"}, 400)
             return None
-        if length < 1 or length > 4096:
+        if length < 1 or length > max_bytes:
             self._json({"error": "invalid request body length"}, 413)
             return None
         try:
@@ -956,6 +962,69 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "JSON object required"}, 400)
             return None
         return opts
+
+    def _worker_authorized(self) -> bool:
+        expected = os.getenv("WORKER_API_TOKEN", "")
+        supplied = self.headers.get("Authorization", "")
+        if len(expected) < 32 or not supplied.startswith("Bearer "):
+            return False
+        return hmac.compare_digest(supplied.removeprefix("Bearer "), expected)
+
+    def _worker_request(self, path: str) -> bool:
+        """Serve the token-protected GitHub worker API.
+
+        The worker never receives the Supabase key. It claims jobs and uploads
+        validated JSON batches through this Vercel function instead.
+        """
+        if path not in {"/api/worker/claim", "/api/worker/leads", "/api/worker/finish"}:
+            return False
+        if not self._worker_authorized():
+            self._json({"error": "worker authorization required"}, 401)
+            return True
+        opts = self._read_json(WORKER_BODY_LIMIT)
+        if opts is None:
+            return True
+        try:
+            if path == "/api/worker/claim":
+                return self._json({"job": claim_next_job()}) or True
+
+            job_id = opts.get("job_id")
+            job = get_job(job_id)
+            if not job:
+                self._json({"error": "scrape job was not found"}, 404)
+                return True
+            if job.get("status") != "running":
+                self._json({"error": "scrape job is not running"}, 409)
+                return True
+
+            if path == "/api/worker/leads":
+                leads = opts.get("leads")
+                if not isinstance(leads, list) or len(leads) > WORKER_BATCH_LIMIT:
+                    self._json({"error": "invalid lead batch"}, 400)
+                    return True
+                saved = save_lead_dicts(leads)
+                self._json({"saved": saved})
+                return True
+
+            status = opts.get("status")
+            if status not in {"completed", "failed"}:
+                self._json({"error": "invalid completion status"}, 400)
+                return True
+            raw_lines = opts.get("log_tail")
+            lines = raw_lines if isinstance(raw_lines, list) else []
+            values = {
+                "status": status,
+                "finished_at": utcnow().isoformat(),
+                "log_tail": [str(line)[:2000] for line in lines[-80:]],
+                "leads_saved": _bounded_int(opts.get("leads_saved"), 0, 0, 5000),
+                "error": str(opts.get("error") or "")[:2000] or None,
+            }
+            update_job(str(job_id), values)
+            self._json({"ok": True})
+            return True
+        except (SupabaseJobError, SupabaseStoreError) as exc:
+            self._json({"error": str(exc)}, 503)
+            return True
 
     # -- routes
     def do_GET(self):
@@ -1035,6 +1104,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._same_origin():
             return self._json({"error": "request origin is not allowed"}, 403)
         path = urlparse(self.path).path
+        if path.startswith("/api/worker/"):
+            self._worker_request(path)
+            return
         if path not in ("/api/login", "/api/logout", "/api/run", "/api/stop"):
             return self._json({"error": "not found"}, 404)
         if path == "/api/login":

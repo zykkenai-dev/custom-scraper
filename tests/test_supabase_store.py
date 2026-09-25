@@ -59,3 +59,29 @@ def test_save_upserts_rows(monkeypatch):
     assert calls[0][1]["params"] == {"on_conflict": "website_key"}
     assert calls[0][1]["headers"]["apikey"] == "sb_secret_test"
     assert calls[0][1]["json"][0]["website_key"] == "acme.com"
+
+
+def test_worker_dicts_are_validated_through_lead_model(monkeypatch):
+    captured = []
+
+    def fake_save(leads, *, timeout=20.0):
+        captured.extend(leads)
+        return len(leads)
+
+    monkeypatch.setattr(supabase_store, "save_leads", fake_save)
+    count = supabase_store.save_lead_dicts([
+        {
+            "business_name": "Acme",
+            "niche": "saas",
+            "website": "https://acme.example/contact",
+            "emails": ["hello@acme.example"],
+            "quality_score": 100,
+            "quality_label": "high",
+            "unexpected": "ignored",
+        },
+        {"business_name": "No website"},
+    ])
+    assert count == 1
+    assert captured[0].business_name == "Acme"
+    assert captured[0].quality_score == 17
+    assert not hasattr(captured[0], "unexpected")

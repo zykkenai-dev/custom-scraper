@@ -183,6 +183,48 @@ class TestHostedOrigin:
             httpd.server_close()
             thread.join(timeout=3)
 
+    def test_worker_api_requires_token_and_proxies_supabase(self, monkeypatch):
+        token = "worker-token-" + "x" * 32
+        job_id = "00000000-0000-0000-0000-000000000001"
+        updates = []
+        monkeypatch.setenv("VERCEL", "1")
+        monkeypatch.setenv("WORKER_API_TOKEN", token)
+        monkeypatch.setattr(server, "claim_next_job", lambda: {"id": job_id, "status": "running"})
+        monkeypatch.setattr(server, "get_job", lambda value: {"id": value, "status": "running"})
+        monkeypatch.setattr(server, "save_lead_dicts", lambda rows: len(rows))
+        monkeypatch.setattr(server, "update_job", lambda value, fields: updates.append((value, fields)))
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{httpd.server_port}"
+
+        def post(path, payload, supplied=token):
+            headers = {"Host": "project.vercel.app", "Content-Type": "application/json"}
+            if supplied:
+                headers["Authorization"] = f"Bearer {supplied}"
+            return urlopen(Request(base + path, data=json.dumps(payload).encode(), headers=headers), timeout=3)
+
+        try:
+            with pytest.raises(HTTPError) as exc:
+                post("/api/worker/claim", {}, supplied="")
+            assert exc.value.code == 401
+            with post("/api/worker/claim", {}) as response:
+                assert json.load(response)["job"]["id"] == job_id
+            with post("/api/worker/leads", {"job_id": job_id, "leads": [{"website": "https://acme.example"}]}) as response:
+                assert json.load(response)["saved"] == 1
+            with post("/api/worker/finish", {
+                "job_id": job_id, "status": "completed", "leads_saved": 1,
+                "log_tail": ["done"],
+            }) as response:
+                assert json.load(response)["ok"] is True
+            assert updates[0][0] == job_id
+            assert updates[0][1]["status"] == "completed"
+            assert updates[0][1]["leads_saved"] == 1
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
 
 class TestParseLog:
     def test_parses_metric_lines(self):
