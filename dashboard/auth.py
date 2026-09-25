@@ -150,6 +150,11 @@ class HostedAuthStore:
             raise ValueError("DASHBOARD_SESSION_SECRET must be at least 32 characters")
         self.password = password.encode("utf-8")
         self.session_secret = session_secret.encode("utf-8")
+        # Bind cookies to both secrets so rotating either one immediately
+        # revokes sessions issued with the previous dashboard password.
+        self.signing_key = hmac.new(
+            self.session_secret, self.password, hashlib.sha256
+        ).digest()
 
     @classmethod
     def from_env(cls) -> "HostedAuthStore | None":
@@ -175,7 +180,7 @@ class HostedAuthStore:
 
     def _signature(self, payload: str) -> str:
         digest = hmac.new(
-            self.session_secret, payload.encode("ascii"), hashlib.sha256
+            self.signing_key, payload.encode("ascii"), hashlib.sha256
         ).digest()
         return self._encode(digest)
 

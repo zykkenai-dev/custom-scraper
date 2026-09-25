@@ -13,3 +13,4 @@ data/cache/
 venv/
 .vercel
 .env*
+.secrets/

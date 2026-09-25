@@ -62,6 +62,8 @@ def test_hosted_auth_uses_environment_password_and_signed_session(monkeypatch):
     assert session["csrf"] == csrf
     assert store.login("tarun", "wrong", "203.0.113.10") is None
     assert store.session(token + "tampered") is None
+    rotated = auth.HostedAuthStore("new-test-pass", "s" * 48)
+    assert rotated.session(token) is None
     store.revoke(token)  # stateless logout is handled by clearing the cookie
 
 
