@@ -738,7 +738,7 @@ def _enqueue_hosted_run(opts: dict, requested_by: str = "") -> tuple[bool, dict]
     return True, {
         "queued": True,
         "job_id": job_id,
-        "message": "Scrape queued. The worker will process it and save real leads to Supabase.",
+        "message": "Scrape started. Leads will appear automatically as they are found.",
     }
 
 

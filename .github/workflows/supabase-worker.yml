@@ -1,6 +1,8 @@
 name: Supabase scrape worker
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -24,6 +26,8 @@ jobs:
         env:
           WORKER_API_URL: ${{ vars.WORKER_API_URL }}
           WORKER_API_TOKEN: ${{ secrets.WORKER_API_TOKEN }}
+          WORKER_WATCH_SECONDS: "1500"
+          WORKER_POLL_SECONDS: "10"
           SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
           SERPAPI_RESERVE: ${{ vars.SERPAPI_RESERVE }}
           SERPAPI_MAX_PER_RUN: ${{ vars.SERPAPI_MAX_PER_RUN }}

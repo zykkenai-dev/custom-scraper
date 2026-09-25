@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,7 +136,7 @@ def _saved_count(output: str) -> int:
     return int(matches[-1]) if matches else 0
 
 
-def run_one() -> int:
+def run_one(idle_code: int = 0) -> int:
     try:
         job = _claim_job()
     except (SupabaseJobError, RuntimeError, requests.RequestException) as exc:
@@ -143,7 +144,7 @@ def run_one() -> int:
         return 1
     if not job:
         print("No queued scrape job.")
-        return 0
+        return idle_code
 
     job_id = str(job["id"])
     with tempfile.TemporaryDirectory(prefix="lead-worker-") as temp_dir:
@@ -195,5 +196,38 @@ def run_one() -> int:
     return 0 if code == 0 else 1
 
 
+def run_watch(watch_seconds: int, poll_seconds: int) -> int:
+    """Keep a hosted worker ready so dashboard jobs start without cron latency."""
+    watch_seconds = max(1, min(int(watch_seconds), RUN_TIMEOUT_SECONDS))
+    poll_seconds = max(1, min(int(poll_seconds), 60))
+    deadline = time.monotonic() + watch_seconds
+    failures = 0
+    print(
+        f"Worker ready for {watch_seconds}s; checking every {poll_seconds}s.",
+        flush=True,
+    )
+    while True:
+        code = run_one(idle_code=-1)
+        if code > 0:
+            failures += 1
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if code == -1:
+            time.sleep(min(poll_seconds, remaining))
+    print("Worker watch window finished.", flush=True)
+    return 1 if failures else 0
+
+
+def main() -> int:
+    try:
+        watch_seconds = int(os.getenv("WORKER_WATCH_SECONDS", "0") or 0)
+        poll_seconds = int(os.getenv("WORKER_POLL_SECONDS", "10") or 10)
+    except ValueError:
+        print("WORKER_WATCH_SECONDS and WORKER_POLL_SECONDS must be integers.", file=sys.stderr)
+        return 1
+    return run_watch(watch_seconds, poll_seconds) if watch_seconds > 0 else run_one()
+
+
 if __name__ == "__main__":
-    raise SystemExit(run_one())
+    raise SystemExit(main())

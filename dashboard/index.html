@@ -16,7 +16,7 @@
 
   <main class="shell">
     <section class="hero" id="overview" aria-labelledby="heroTitle">
-      <div class="hero-copy"><p class="eyebrow">YOUR OUTREACH WORKSPACE <span class="eyebrow-line"></span> LOCAL DASHBOARD</p><h1 id="heroTitle">A clearer path from websites to conversations.</h1><p>Find businesses, collect public contact details, and review the leads worth reaching out to.</p><a class="hero-link" href="#workspace">Set up a scrape <span aria-hidden="true">↗</span></a></div>
+      <div class="hero-copy"><p class="eyebrow">YOUR OUTREACH WORKSPACE <span class="eyebrow-line"></span> LEAD DISCOVERY</p><h1 id="heroTitle">A clearer path from websites to conversations.</h1><p>Find businesses, collect public contact details, and review the leads worth reaching out to.</p><a class="hero-link" href="#workspace">Set up a scrape <span aria-hidden="true">↗</span></a></div>
       <div class="hero-stats" aria-label="Saved lead summary"><div class="hero-stat"><strong id="heroTotal">—</strong><span>Saved leads</span></div><div class="hero-stat"><strong id="heroPublished">—</strong><span>With published email</span></div><div class="hero-stat"><strong id="heroInferred">—</strong><span>With inferred email</span></div></div>
     </section>
 
@@ -24,7 +24,7 @@
       <section class="surface setup-panel" aria-labelledby="setupTitle">
         <div class="section-heading"><div><p class="kicker">01 / SETUP</p><h2 id="setupTitle">New scrape</h2></div><span class="section-icon" aria-hidden="true">✦</span></div>
         <p class="section-intro">Choose a source, target industries, and how many leads to collect.</p>
-        <p id="hostedNotice" class="form-notice hidden" role="status">This Vercel dashboard queues real scrape jobs for the durable worker. Results are saved to Supabase.</p>
+        <p id="hostedNotice" class="form-notice hidden" role="status">Choose your options and press Start scraping. The scrape continues safely in the background and leads appear below automatically.</p>
         <div class="field-group"><span class="field-label">Where should we find websites?</span><div class="source-picker" role="group" aria-label="Website source">
           <button class="source-choice selected" id="modeSearch" type="button" aria-pressed="true"><span class="source-icon" aria-hidden="true">⌕</span><span><strong>Search the web</strong><small>Discover businesses by niche</small></span></button>
           <button class="source-choice" id="modeSeeds" type="button" aria-pressed="false"><span class="source-icon" aria-hidden="true">≡</span><span><strong>Use a seed list</strong><small>Scrape websites you provide</small></span></button>
@@ -46,7 +46,7 @@
     </section>
     <details class="surface log-panel" id="logPanel"><summary><span><span class="log-icon" aria-hidden="true">⌘</span> Run log</span><small id="logLine">Latest output appears here</small><span aria-hidden="true">⌄</span></summary><pre id="log">No run output yet.</pre></details>
   </main>
-  <footer class="site-footer"><div class="shell"><span>Lead Studio · local prospect workspace</span><span id="lastUpdated">Waiting for connection</span></div></footer>
+  <footer class="site-footer"><div class="shell"><span>Lead Studio · prospect workspace</span><span id="lastUpdated">Waiting for connection</span></div></footer>
   <dialog id="leadDialog" class="lead-dialog" aria-labelledby="dialogTitle"><div class="dialog-head"><div><p class="kicker">LEAD DETAILS</p><h2 id="dialogTitle">Business</h2></div><button id="dialogClose" class="dialog-close" type="button" aria-label="Close details">×</button></div><div id="dialogBody" class="dialog-body"></div></dialog><div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>

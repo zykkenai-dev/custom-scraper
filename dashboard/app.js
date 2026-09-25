@@ -79,7 +79,7 @@ async function submitRun() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
     if (result.queued) {
-      notice(result.message || "Scrape queued. The worker will process it shortly.", true);
+      notice(result.message || "Scrape started. Leads will appear automatically as they are found.", true);
       state.lastLog = "";
     } else {
       notice("Scrape started. Live activity and results will update below.", true);
@@ -90,7 +90,7 @@ async function submitRun() {
     notice(`Could not start the scrape: ${error.message}`);
   } finally {
     state.loading = false;
-    $("btnRun").innerHTML = state.hostedTest ? "Run test scrape <span aria-hidden=\"true\">→</span>" : "Start scraping <span aria-hidden=\"true\">→</span>";
+    $("btnRun").innerHTML = "Start scraping <span aria-hidden=\"true\">→</span>";
     $("btnRun").disabled = !!state.status?.running;
   }
 }
@@ -111,23 +111,27 @@ function renderStatus(status) {
   const running = !!status.running;
   const hosted = !!status.hosted;
   const hostedTest = !!status.hosted_test_mode;
+  const jobStatus = String(status.job_status || "idle");
+  const starting = hosted && jobStatus === "queued";
+  const scraping = hosted && jobStatus === "running";
   state.hosted = hosted;
   state.hostedTest = hostedTest;
   const failed = !running && status.exit_code !== null && status.exit_code !== 0;
   const finished = !running && status.exit_code === 0;
   $("connection").className = `connection ${running ? "running" : failed ? "error" : ""}`;
-  $("headerStatus").textContent = hosted ? "Worker queue" : running ? "Scraping now" : failed ? "Run needs attention" : "Local & ready";
+  $("headerStatus").textContent = hosted ? (running ? (starting ? "Starting scraper" : "Scraping now") : "Scraper ready") : running ? "Scraping now" : failed ? "Run needs attention" : "Local & ready";
   $("hostedNotice").classList.toggle("hidden", !hostedTest);
-  $("runFootnote").textContent = hostedTest ? "Jobs are processed by the durable Supabase worker" : "Runs locally on your machine";
+  $("runFootnote").textContent = hostedTest ? "Scraping continues in the background" : "Runs locally on your machine";
+  $("r_out").closest(".field-group").classList.toggle("hidden", hosted);
   $("runBadge").className = `run-state ${running ? "running" : failed ? "error" : "idle"}`;
   $("runBadge").lastElementChild.textContent = running ? "Running" : failed ? "Failed" : finished ? "Complete" : "Idle";
   $("activity").classList.toggle("running", running);
   const mode = status.seeds ? "seed list" : "web search";
-  $("runTitle").textContent = hosted ? (running ? "Scrape queued with the worker" : "Ready for a hosted scrape") : running ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Last run complete" : "Ready when you are";
+  $("runTitle").textContent = hosted ? (starting ? "Starting your scrape" : scraping ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Leads are ready" : "Ready when you are") : running ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Last run complete" : "Ready when you are";
   const errorLine = (status.log_tail || []).slice().reverse().find((line) => /\| ERROR\s+\|/.test(line));
   const found = Number(status.leads_collected_log) || 0;
   $("runSummary").textContent = hosted
-    ? (running ? "The durable worker is processing your request. Progress and completed leads will appear here." : failed ? (status.error || "The worker could not complete this scrape.") : finished ? `Saved ${found} real lead${found === 1 ? "" : "s"} to Supabase.` : "Queue a real scrape from this dashboard. The worker writes actual scraped leads to Supabase.")
+    ? (starting ? "The scraper is starting now. You can leave this page open and leads will appear automatically." : scraping ? "Websites are being searched and checked now. Completed leads will appear below." : failed ? (status.error || "The scraper could not complete this run.") : finished ? `Saved ${found} real lead${found === 1 ? "" : "s"}. Review them below.` : "Choose your options and press Start scraping. Real leads will appear below automatically.")
     : running
     ? `Working through ${status.niches?.length || 1} industry selection${status.niches?.length === 1 ? "" : "s"} using ${mode}.`
     : failed ? (errorLine ? errorLine.split(" | ").slice(-1)[0] : `Exit code ${status.exit_code}. Open the run log for details.`)
@@ -142,10 +146,10 @@ function renderStatus(status) {
   $("metricProbed").textContent = status.candidates_probed || 0;
   $("metricSearches").textContent = status.searches || 0;
   $("metricFound").textContent = found;
-  $("runCurrent").textContent = hosted ? (running ? "Worker is processing the queued scrape" : "Ready to queue a scrape") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
+  $("runCurrent").textContent = hosted ? (starting ? "Starting the scraper…" : scraping ? "Searching websites and collecting contacts…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
   $("runTime").textContent = `${running ? "Elapsed" : "Last duration"} ${status.elapsed_s ? timeText(status.elapsed_s) : "—"}`;
   $("btnRun").disabled = running || state.loading;
-  $("btnRun").innerHTML = hostedTest ? "Queue scrape <span aria-hidden=\"true\">→</span>" : "Start scraping <span aria-hidden=\"true\">→</span>";
+  $("btnRun").innerHTML = "Start scraping <span aria-hidden=\"true\">→</span>";
   $("btnStop").disabled = !running;
   const lines = status.log_tail || [];
   const logText = lines.length ? lines.join("\n") : "No run output yet.";

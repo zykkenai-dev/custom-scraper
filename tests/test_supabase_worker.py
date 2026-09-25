@@ -24,3 +24,15 @@ def test_remote_upload_batches_local_export(tmp_path, monkeypatch):
     assert calls[0][0] == "/api/worker/leads"
     assert calls[0][1]["job_id"] == "job-1"
     assert calls[0][1]["leads"][0]["emails"] == ["hello@acme.example"]
+
+
+def test_watch_keeps_polling_until_deadline(monkeypatch):
+    results = iter([-1, 0, -1])
+    clock = iter([0.0, 0.0, 1.0, 2.0])
+    sleeps = []
+    monkeypatch.setattr(supabase_worker, "run_one", lambda idle_code=0: next(results))
+    monkeypatch.setattr(supabase_worker.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(supabase_worker.time, "sleep", sleeps.append)
+
+    assert supabase_worker.run_watch(2, 1) == 0
+    assert sleeps == [1]
