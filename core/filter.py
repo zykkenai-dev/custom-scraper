@@ -35,6 +35,7 @@ DENY_HOSTS = {
     "onlinerealtor.com", "propertyshark.com", "propertyline-india.com",
     "booking.com", "airbnb.com", "expedia.com", "tripadvisor.com",
     "indeed.com", "glassdoor.com", "yelp.com", "yellowpages.com",
+    "builtin.com", "ziprecruiter.com",
     "craigslist.org", "ebay.com", "amazon.com", "walmart.com",
     "homedepot.com", "lowes.com",
     # Banks / financial institutions (not outreach leads)
@@ -134,6 +135,10 @@ DENY_HOSTS = {
     "estatesales.net", "reply.gs", "lookbeyond.io", "racialjustice.abc7ny.com",
     # Industry associations / national bodies with a "contact" page (not leads)
     "nar.realtor", "realtor.org", "rla.org.au", "rea.org.au", "areaa.com.au",
+    # Awards, chamber directories, templates, and adjacent legal content are
+    # not target businesses even when an individual page mentions a niche.
+    "luxurylifestyleawards.com", "jeffersoncountywvchamber.org",
+    "code49.com", "lawyersinarizona.com",
     # Software / SaaS selling INTO the real-estate niche (never a prospect)
     "real-agent.ai", "kvcore.com", "followupboss.com", "chime.io",
 }

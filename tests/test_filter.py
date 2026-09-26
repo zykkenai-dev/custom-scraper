@@ -40,6 +40,14 @@ class TestUrlDeny:
     def test_estate_sale_directory_is_denied(self):
         assert url_is_denied("https://www.estatesale.com/companies/WA/Seattle")
 
+    def test_job_boards_and_niche_adjacent_directories_are_denied(self):
+        assert url_is_denied("https://builtin.com/job/business-development-manager/1")
+        assert url_is_denied("https://www.ziprecruiter.com/Jobs/Real-Estate")
+        assert url_is_denied("https://luxurylifestyleawards.com/winners")
+        assert url_is_denied("https://business.jeffersoncountywvchamber.org/directory/Details/acme")
+        assert url_is_denied("https://code49.com/templates/services.php")
+        assert url_is_denied("https://lawyersinarizona.com/real-estate-law")
+
 
 class TestNameDeny:
     def test_mega_brand(self):
