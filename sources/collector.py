@@ -290,8 +290,15 @@ class SearchSource:
             logger.warning("Engine %s returned off-topic results for %r; failing over",
                            type(engine).__name__, query)
 
-        if not live and self.search.available and allow_paid:
-            logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
+        use_paid = self.search.available and allow_paid and (not live or bool(maps_query))
+        if use_paid:
+            if maps_query and live:
+                logger.info(
+                    "Supplementing free results for %r with quota-protected SerpAPI Maps",
+                    query,
+                )
+            else:
+                logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
             try:
                 paid_query = maps_query or query
                 paid_engine = "google_maps" if maps_query else "google"
@@ -299,7 +306,7 @@ class SearchSource:
                     self.search.search(paid_query, num=num, engine=paid_engine)
                 )
                 if paid and (niche is None or _results_relevant(paid, niche)):
-                    live = paid
+                    live = _dedupe_urls(live + paid)
                 elif paid:
                     logger.warning("SerpAPI returned off-topic results for %r", query)
             except Exception as exc:  # noqa: BLE001

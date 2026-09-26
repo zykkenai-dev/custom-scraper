@@ -211,6 +211,37 @@ def test_serpapi_is_last_resort(real_estate_niche):
     assert paid.calls == 1
 
 
+def test_maps_fallback_supplements_small_free_result_bank(real_estate_niche):
+    source = SearchSource.__new__(SearchSource)
+    source.settings = SimpleNamespace(cache_search=False)
+    source._load_cached = lambda _query: []
+    source._save_cache = lambda _query, _urls: None
+
+    class Engine:
+        available = True
+
+        def __init__(self, results):
+            self.results = results
+            self.calls = []
+
+        def search(self, query, **kwargs):
+            self.calls.append((query, kwargs))
+            return self.results
+
+    free = Engine([{"url": "https://free.example", "title": "Free real estate brokerage"}])
+    paid = Engine([{"url": "https://maps.example", "title": "Maps real estate agency"}])
+    source.free_engines = [free]
+    source.search = paid
+
+    results = source._discover(
+        "real estate New York",
+        niche=real_estate_niche,
+        maps_query="Real Estate New York NY",
+    )
+    assert [item["url"] for item in results] == ["https://free.example", "https://maps.example"]
+    assert paid.calls == [("Real Estate New York NY", {"num": 10, "engine": "google_maps"})]
+
+
 def test_js_shell_uses_rendered_text_for_scope(real_estate_niche):
     source = SearchSource.__new__(SearchSource)
     source.settings = SimpleNamespace(free_js_render=True, infer_emails=False)
