@@ -153,8 +153,12 @@ def _discovery_queries(niche: Niche, max_leads: int, country: str = "us") -> lis
 
     markets = _DISCOVERY_MARKETS.get((country or "").strip().lower(), _GENERIC_MARKETS)
     expanded = list(base)
-    for market in markets:
-        for query in base:
+    # Rotate the base query while advancing through markets. This ensures the
+    # first paid fallbacks cover different cities instead of spending the
+    # whole per-run allowance on four equivalent searches for one city.
+    for round_index in range(len(base)):
+        for market_index, market in enumerate(markets):
+            query = base[(market_index + round_index) % len(base)]
             expanded.append(f'{query} "{market}"')
             if len(expanded) >= query_budget:
                 return expanded
@@ -240,6 +244,7 @@ class SearchSource:
         num: int = 10,
         niche: Niche | None = None,
         maps_query: str | None = None,
+        allow_paid: bool = True,
     ) -> list:
         """Try cache and free engines before the quota-protected paid fallback.
 
@@ -285,7 +290,7 @@ class SearchSource:
             logger.warning("Engine %s returned off-topic results for %r; failing over",
                            type(engine).__name__, query)
 
-        if not live and self.search.available:
+        if not live and self.search.available and allow_paid:
             logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
             try:
                 paid_query = maps_query or query
@@ -402,11 +407,16 @@ class SearchSource:
         results_per_query = _results_per_query(max_leads)
         for query in queries:
             logger.info("Searching: %r", query)
+            maps_query = _maps_query(niche, query)
             urls = self._discover(
                 query,
                 num=results_per_query,
                 niche=niche,
-                maps_query=_maps_query(niche, query),
+                maps_query=maps_query,
+                # For large jobs, preserve the paid allowance for Maps
+                # searches. Organic fallback calls on the four generic base
+                # queries produce far fewer unique business websites.
+                allow_paid=max_leads < 50 or maps_query is not None,
             )
             discovered_any = discovered_any or bool(urls)
             for item in urls:

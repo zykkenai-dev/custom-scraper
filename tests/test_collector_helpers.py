@@ -107,6 +107,8 @@ class TestDiscoveryQueries:
         assert queries[:4] == real_estate_niche.search_queries
         assert any('"New York NY"' in query for query in queries)
         assert len(set(queries)) == len(queries)
+        map_queries = [_maps_query(real_estate_niche, query) for query in queries[4:8]]
+        assert len(set(map_queries)) == 4
 
     def test_expansion_is_capped(self, real_estate_niche):
         assert len(_discovery_queries(real_estate_niche, 500, "us")) == 60
