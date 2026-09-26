@@ -12,6 +12,7 @@ Barebone scaffold:
 
 import argparse
 import logging
+import math
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
@@ -24,6 +25,18 @@ from output.exporter import dedupe_leads, export_leads, load_leads
 from output.supabase_store import SupabaseStoreError, save_leads
 
 logger = logging.getLogger("main")
+
+
+def _serpapi_budget_for_target(configured: int, target: int) -> int:
+    """Scale fallback calls for large targets while protecting free quota."""
+    configured = max(0, int(configured))
+    target = max(1, int(target))
+    if target < 50:
+        return configured
+    # Maps returns about 20 businesses per call. One extra page accounts for
+    # blocked sites and businesses without usable public contact details.
+    volume_budget = min(12, math.ceil(target / 20) + 1)
+    return max(configured, volume_budget)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -190,7 +203,19 @@ def run_dry_run(settings) -> int:
 
 def _collect_niche(args, settings, niche, prior_domains):
     """Scrape a single niche in its own worker thread (own session)."""
-    source_settings = replace(settings, max_concurrent_requests=args.request_workers)
+    serpapi_budget = _serpapi_budget_for_target(settings.serpapi_max_per_run, args.max)
+    source_settings = replace(
+        settings,
+        max_concurrent_requests=args.request_workers,
+        serpapi_max_per_run=serpapi_budget,
+    )
+    if settings.has_serpapi:
+        logger.info(
+            "SerpAPI fallback budget for target %d: %d calls (monthly reserve %d)",
+            args.max,
+            serpapi_budget,
+            settings.serpapi_reserve,
+        )
     source = SearchSource(source_settings, enrich=not args.no_enrich)
     if args.seeds:
         lead_list = source.collect_seeds(niche, args.seed_urls, max_leads=args.max)

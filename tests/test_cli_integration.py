@@ -8,9 +8,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from core.models import Lead
+from main import _serpapi_budget_for_target
 from output.exporter import export_leads, load_leads
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_serpapi_budget_scales_with_large_target():
+    assert _serpapi_budget_for_target(4, 20) == 4
+    assert _serpapi_budget_for_target(4, 50) == 4
+    assert _serpapi_budget_for_target(4, 100) == 6
+    assert _serpapi_budget_for_target(4, 200) == 11
+    assert _serpapi_budget_for_target(4, 500) == 12
 
 
 def test_seed_cli_crawls_contact_page_and_fresh_replaces_prior(tmp_path):
