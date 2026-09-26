@@ -109,6 +109,9 @@ $("btnStop").addEventListener("click", async () => {
 });
 
 function hostedCompletionSummary(status, saved, discovered) {
+  const requested = Math.max(1, (Number(status.max) || 0) * Math.max(1, status.niches?.length || 1));
+  const minimum = Math.ceil(requested / 2);
+  if (saved > 0 && saved < minimum) return `Saved ${saved} of ${requested} requested leads. Expanded discovery finished below the ${minimum}-lead minimum goal; try another industry, country, or a seed list to add more sources.`;
   if (saved > 0) return `Saved ${saved} real lead${saved === 1 ? "" : "s"}. Review them below.`;
   if (discovered <= 0) return "No qualified leads were found. Try another industry, a larger target, or Use a seed list for known websites.";
   const filters = status.filters_applied || {};
@@ -145,7 +148,10 @@ function renderStatus(status) {
   const found = Number(status.leads_collected_log) || 0;
   const discovered = Number(status.leads_discovered) || found;
   const filteredOut = finished && found === 0 && discovered > 0;
+  const requested = Math.max(1, (Number(status.max) || 0) * Math.max(1, status.niches?.length || 1));
+  const belowMinimum = finished && found > 0 && found < Math.ceil(requested / 2);
   if (hosted && filteredOut) $("runTitle").textContent = "Leads found, filters too strict";
+  if (hosted && belowMinimum) $("runTitle").textContent = "Partial target reached";
   $("runSummary").textContent = hosted
     ? (starting ? "The scraper is starting now. You can leave this page open and leads will appear automatically." : scraping ? "Websites are being searched and checked now. Completed leads will appear below." : failed ? (status.error || "The scraper could not complete this run.") : finished ? hostedCompletionSummary(status, found, discovered) : "Choose your options and press Start scraping. Real leads will appear below automatically.")
     : running
@@ -153,7 +159,7 @@ function renderStatus(status) {
     : failed ? (errorLine ? errorLine.split(" | ").slice(-1)[0] : `Exit code ${status.exit_code}. Open the run log for details.`)
     : finished ? (found ? `Collected ${found} lead${found === 1 ? "" : "s"} and saved results to ${status.out_file || "the selected file"}.` : "The run finished without new leads. Your saved library is still available below.")
     : "Set up a scrape to see discovery, progress, and saved leads here.";
-  const max = Math.max(1, (Number(status.max) || 0) * Math.max(1, status.niches?.length || 1));
+  const max = requested;
   const pct = running || finished ? Math.min(100, Math.round(found / max * 100)) : 0;
   $("runProgress").style.width = `${pct}%`;
   $("runProgressTrack").setAttribute("aria-valuenow", String(pct));
@@ -162,7 +168,7 @@ function renderStatus(status) {
   $("metricProbed").textContent = status.candidates_probed || 0;
   $("metricSearches").textContent = status.searches || 0;
   $("metricFound").textContent = found;
-  $("runCurrent").textContent = hosted ? (starting ? "Starting the scraper…" : scraping ? "Searching websites and collecting contacts…" : failed ? "Open the run log to see what happened." : filteredOut ? "Adjust Advanced options and start again." : finished ? "Ready for another run." : "Waiting for a run") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
+  $("runCurrent").textContent = hosted ? (starting ? "Starting the scraper…" : scraping ? "Searching websites and collecting contacts…" : failed ? "Open the run log to see what happened." : filteredOut ? "Adjust Advanced options and start again." : belowMinimum ? "Discovery sources were exhausted before the minimum goal." : finished ? "Ready for another run." : "Waiting for a run") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
   $("runTime").textContent = `${running ? "Elapsed" : "Last duration"} ${status.elapsed_s ? timeText(status.elapsed_s) : "—"}`;
   $("btnRun").disabled = running || state.loading;
   $("btnRun").innerHTML = "Start scraping <span aria-hidden=\"true\">→</span>";

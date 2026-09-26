@@ -7,6 +7,7 @@ enrichment -> qualified leads.
 """
 
 import logging
+import math
 import os
 import threading
 import time
@@ -71,6 +72,98 @@ CONTACT_PATHS = (
 )
 
 _CACHE_DIR = os.path.join("data", "cache")
+
+# Large targets need more than the four hand-written niche queries. These
+# markets turn each query into a distinct local-business search while keeping
+# the configured SEARCH_COUNTRY as the source of truth. Unknown countries use
+# broad market labels rather than silently falling back to the United States.
+_DISCOVERY_MARKETS = {
+    "us": (
+        "New York NY", "Los Angeles CA", "Chicago IL", "Houston TX",
+        "Phoenix AZ", "Philadelphia PA", "San Antonio TX", "San Diego CA",
+        "Dallas TX", "Austin TX", "Jacksonville FL", "San Jose CA",
+        "Fort Worth TX", "Columbus OH", "Charlotte NC", "Indianapolis IN",
+        "Seattle WA", "Denver CO", "Washington DC", "Nashville TN",
+        "Boston MA", "Las Vegas NV", "Portland OR", "Detroit MI",
+        "Atlanta GA", "Miami FL", "Orlando FL", "Tampa FL",
+        "Raleigh NC", "Minneapolis MN", "Salt Lake City UT", "Kansas City MO",
+        "Sacramento CA", "Cleveland OH", "Pittsburgh PA", "Cincinnati OH",
+        "St Louis MO", "Baltimore MD", "Milwaukee WI", "New Orleans LA",
+        "Richmond VA", "Oklahoma City OK", "Louisville KY", "Memphis TN",
+        "Birmingham AL", "Charleston SC", "Boise ID", "Omaha NE",
+        "Albuquerque NM", "Honolulu HI",
+    ),
+    "in": (
+        "Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata",
+        "Pune", "Ahmedabad", "Jaipur", "Surat", "Lucknow", "Chandigarh",
+        "Gurugram", "Noida", "Indore", "Kochi", "Nagpur", "Vadodara",
+        "Bhopal", "Coimbatore", "Visakhapatnam", "Nashik", "Bhubaneswar",
+        "Patna", "Ludhiana", "Rajkot", "Thane", "Dehradun", "Mysuru",
+        "Mangaluru", "Goa", "Raipur", "Ranchi", "Guwahati", "Jodhpur",
+    ),
+    "gb": (
+        "London", "Manchester", "Birmingham", "Leeds", "Glasgow", "Liverpool",
+        "Bristol", "Edinburgh", "Sheffield", "Newcastle", "Nottingham",
+        "Cardiff", "Belfast", "Leicester", "Brighton", "Cambridge", "Oxford",
+    ),
+    "ca": (
+        "Toronto ON", "Vancouver BC", "Montreal QC", "Calgary AB", "Ottawa ON",
+        "Edmonton AB", "Winnipeg MB", "Quebec City QC", "Hamilton ON",
+        "Halifax NS", "Victoria BC", "Kitchener ON", "London ON", "Saskatoon SK",
+    ),
+    "au": (
+        "Sydney NSW", "Melbourne VIC", "Brisbane QLD", "Perth WA", "Adelaide SA",
+        "Gold Coast QLD", "Canberra ACT", "Newcastle NSW", "Hobart TAS",
+        "Darwin NT", "Geelong VIC", "Wollongong NSW",
+    ),
+    "ae": (
+        "Dubai", "Abu Dhabi", "Sharjah", "Ajman", "Ras Al Khaimah",
+        "Fujairah", "Al Ain",
+    ),
+}
+
+_GENERIC_MARKETS = (
+    "capital city", "largest city", "north region", "south region",
+    "east region", "west region", "central region", "coastal region",
+    "business district", "metropolitan area", "near me",
+)
+
+_DISCOVERY_QUALIFIERS = (
+    "independent", "local", "boutique", "established", "top rated",
+)
+
+
+def _discovery_queries(niche: Niche, max_leads: int, country: str = "us") -> list[str]:
+    """Build enough distinct queries for the requested lead volume.
+
+    Four static queries can reasonably feed a small run, but they cannot feed
+    a 100-lead target. Historical production yield is roughly two qualified
+    leads per query, so large runs get up to one query per two requested leads
+    (capped to protect free providers and runtime). Every base query is used
+    before location variants are added.
+    """
+    base = list(dict.fromkeys(q.strip() for q in niche.search_queries if q.strip()))
+    if not base:
+        return []
+    requested = max(1, int(max_leads))
+    query_budget = min(60, max(len(base), math.ceil(requested / 2)))
+    if query_budget <= len(base):
+        return base
+
+    markets = _DISCOVERY_MARKETS.get((country or "").strip().lower(), _GENERIC_MARKETS)
+    expanded = list(base)
+    for market in markets:
+        for query in base:
+            expanded.append(f'{query} "{market}"')
+            if len(expanded) >= query_budget:
+                return expanded
+    for qualifier in _DISCOVERY_QUALIFIERS:
+        for market in markets:
+            for query in base:
+                expanded.append(f'{query} "{market}" {qualifier}')
+                if len(expanded) >= query_budget:
+                    return expanded
+    return expanded[:query_budget]
 
 
 class SearchSource:
@@ -257,7 +350,20 @@ class SearchSource:
         prior_domains = skip_domains or set()
         discovered_any = False
 
-        for query in niche.search_queries:
+        queries = _discovery_queries(
+            niche,
+            max_leads,
+            getattr(self.settings, "search_country", "us"),
+        )
+        minimum_goal = max(1, math.ceil(max_leads / 2))
+        logger.info(
+            "Discovery plan for %s: %d queries for target %d (minimum goal %d)",
+            niche.id,
+            len(queries),
+            max_leads,
+            minimum_goal,
+        )
+        for query in queries:
             logger.info("Searching: %r", query)
             urls = self._discover(query, num=20, niche=niche)
             discovered_any = discovered_any or bool(urls)
@@ -296,7 +402,11 @@ class SearchSource:
                     continue
                 ranked.append((score, url, query))
             ranked.sort(key=lambda r: r[0], reverse=True)
-            probe_budget = max(15, max_leads * 3)
+            # Search results include blocked sites and pages with no public
+            # contact details. A 4x candidate pool gives the collector room
+            # to reach at least half of a large requested target in ordinary
+            # conditions without probing an unbounded number of websites.
+            probe_budget = max(15, max_leads * 4)
             ranked = ranked[:probe_budget]
             logger.info("Ranked %d relevant candidates for %s (probe budget %d)",
                         len(ranked), niche.id, probe_budget)
@@ -339,6 +449,23 @@ class SearchSource:
                     leads.append(lead)
                     logger.debug("Lead: %s (%s contact points)", name, _contact_count(contact))
 
+        logger.info(
+            "Target summary for %s: collected %d; minimum %d; requested %d",
+            niche.id,
+            len(leads),
+            minimum_goal,
+            max_leads,
+        )
+        if len(leads) < minimum_goal:
+            logger.warning(
+                "Minimum result goal not reached for %s: collected %d of %d; "
+                "discovery exhausted %d queries and %d candidates",
+                niche.id,
+                len(leads),
+                minimum_goal,
+                len(queries),
+                len(candidate_urls),
+            )
         return leads
 
     def _make_lead(self, name, niche, url, contact, query) -> Lead:

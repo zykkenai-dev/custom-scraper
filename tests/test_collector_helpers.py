@@ -8,6 +8,7 @@ from sources.collector import (
     SearchSource,
     _candidate_score,
     _dedupe_urls,
+    _discovery_queries,
     _extract_domain,
     _normalize_candidate_url,
     _ordered_contact_urls,
@@ -92,6 +93,21 @@ class TestDedupeUrls:
 
     def test_dedupe_strings(self):
         assert _dedupe_urls(["https://a.com", "https://a.com"]) == ["https://a.com"]
+
+
+class TestDiscoveryQueries:
+    def test_small_target_uses_base_queries_only(self, real_estate_niche):
+        assert _discovery_queries(real_estate_niche, 6, "us") == real_estate_niche.search_queries
+
+    def test_large_target_expands_to_volume_budget(self, real_estate_niche):
+        queries = _discovery_queries(real_estate_niche, 100, "us")
+        assert len(queries) == 50
+        assert queries[:4] == real_estate_niche.search_queries
+        assert any('"New York NY"' in query for query in queries)
+        assert len(set(queries)) == len(queries)
+
+    def test_expansion_is_capped(self, real_estate_niche):
+        assert len(_discovery_queries(real_estate_niche, 500, "us")) == 60
 
 
 class TestOrderedContactUrls:
