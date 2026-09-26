@@ -13,6 +13,7 @@ from sources.collector import (
     _normalize_candidate_url,
     _ordered_contact_urls,
     _results_relevant,
+    _results_per_query,
 )
 
 
@@ -108,6 +109,11 @@ class TestDiscoveryQueries:
 
     def test_expansion_is_capped(self, real_estate_niche):
         assert len(_discovery_queries(real_estate_niche, 500, "us")) == 60
+
+    def test_large_targets_request_deep_result_pages(self):
+        assert _results_per_query(49) == 20
+        assert _results_per_query(50) == 100
+        assert _results_per_query(100) == 100
 
 
 class TestOrderedContactUrls:

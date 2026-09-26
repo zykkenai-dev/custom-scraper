@@ -166,6 +166,16 @@ def _discovery_queries(niche: Niche, max_leads: int, country: str = "us") -> lis
     return expanded[:query_budget]
 
 
+def _results_per_query(max_leads: int) -> int:
+    """Ask broad searches for deeper result pages on high-volume runs.
+
+    SerpAPI charges by search request rather than organic row count. Requesting
+    up to 100 rows lets the existing four-call fallback budget supply a large
+    candidate bank without spending additional free-plan searches.
+    """
+    return 100 if int(max_leads) >= 50 else 20
+
+
 class SearchSource:
     """Discover business websites via search and harvest their contacts.
 
@@ -363,9 +373,10 @@ class SearchSource:
             max_leads,
             minimum_goal,
         )
+        results_per_query = _results_per_query(max_leads)
         for query in queries:
             logger.info("Searching: %r", query)
-            urls = self._discover(query, num=20, niche=niche)
+            urls = self._discover(query, num=results_per_query, niche=niche)
             discovered_any = discovered_any or bool(urls)
             for item in urls:
                 url = item["url"] if isinstance(item, dict) else item
