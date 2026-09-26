@@ -180,6 +180,9 @@ class TestHostedOrigin:
             with urlopen(Request(base + "/share-preview.jpg", headers=headers), timeout=3) as response:
                 assert response.headers["Content-Type"] == "image/jpeg"
                 assert response.read(2) == b"\xff\xd8"
+            with urlopen(Request(base + "/brand-logo.png", headers=headers), timeout=3) as response:
+                assert response.headers["Content-Type"] == "image/png"
+                assert response.read(8) == b"\x89PNG\r\n\x1a\n"
             with urlopen(Request(base + "/share-preview.jpg", headers=headers, method="HEAD"), timeout=3) as response:
                 assert response.status == 200
                 assert response.headers["Content-Length"] == str((server.DASH / "share-preview.jpg").stat().st_size)
