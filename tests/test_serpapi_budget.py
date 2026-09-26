@@ -64,3 +64,30 @@ def test_failed_quota_check_preserves_credits():
     client._session = Session()
     client._session.get = lambda *_args, **_kwargs: Response({}, 503)
     assert client.search("real estate") == []
+
+
+def test_google_maps_returns_business_websites():
+    client = _client()
+
+    class MapsSession(Session):
+        def get(self, url, **kwargs):
+            if url.endswith("account.json"):
+                return Response({"plan_searches_left": self.remaining})
+            self.searches += 1
+            assert kwargs["params"]["engine"] == "google_maps"
+            assert kwargs["params"]["type"] == "search"
+            assert "num" not in kwargs["params"]
+            return Response({
+                "local_results": [
+                    {
+                        "website": "https://acmerealty.example",
+                        "title": "Acme Realty",
+                        "type": "Real estate agency",
+                    },
+                ],
+            })
+
+    client._session = MapsSession()
+    assert client.search("real estate New York", engine="google_maps") == [
+        {"url": "https://acmerealty.example", "title": "Acme Realty Real estate agency"},
+    ]

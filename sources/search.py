@@ -83,10 +83,13 @@ class SearchClient:
             "q": query,
             "engine": engine,
             "api_key": self._api_key,
-            "num": min(num, 100),
             "hl": "en",
             "gl": self._settings.search_country,
         }
+        if engine == "google_maps":
+            params["type"] = "search"
+        else:
+            params["num"] = min(num, 100)
         try:
             resp = self._session.get(SERPAPI_ENDPOINT, params=params, timeout=30)
             if resp.status_code >= 400:
@@ -105,9 +108,14 @@ class SearchClient:
         self._used_this_run += 1
 
         results: list[dict] = []
-        for item in data.get("organic_results", []):
-            link = (item.get("link") or "").strip()
-            title = (item.get("title") or "").strip()
+        items = data.get("local_results", []) if engine == "google_maps" else data.get("organic_results", [])
+        for item in items:
+            links = item.get("links") if isinstance(item.get("links"), dict) else {}
+            link = (item.get("website") or links.get("website") or item.get("link") or "").strip()
+            title_parts = [item.get("title") or "", item.get("type") or ""]
+            if isinstance(item.get("types"), list):
+                title_parts.extend(str(value) for value in item["types"])
+            title = " ".join(part.strip() for part in title_parts if str(part).strip())
             if link.startswith("http"):
                 results.append({"url": link, "title": title})
         return _dedupe_results(results)

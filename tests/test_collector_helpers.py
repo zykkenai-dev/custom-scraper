@@ -10,6 +10,7 @@ from sources.collector import (
     _dedupe_urls,
     _discovery_queries,
     _extract_domain,
+    _maps_query,
     _normalize_candidate_url,
     _ordered_contact_urls,
     _results_relevant,
@@ -114,6 +115,11 @@ class TestDiscoveryQueries:
         assert _results_per_query(49) == 20
         assert _results_per_query(50) == 100
         assert _results_per_query(100) == 100
+
+    def test_location_variant_becomes_maps_business_query(self, real_estate_niche):
+        expanded = _discovery_queries(real_estate_niche, 100, "us")
+        assert _maps_query(real_estate_niche, expanded[4]) == "Real Estate New York NY"
+        assert _maps_query(real_estate_niche, real_estate_niche.search_queries[0]) is None
 
 
 class TestOrderedContactUrls:

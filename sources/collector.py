@@ -9,6 +9,7 @@ enrichment -> qualified leads.
 import logging
 import math
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -176,6 +177,21 @@ def _results_per_query(max_leads: int) -> int:
     return 100 if int(max_leads) >= 50 else 20
 
 
+def _maps_query(niche: Niche, query: str) -> str | None:
+    """Return a simple local-business query for an expanded market search."""
+    for base in niche.search_queries:
+        prefix = base.strip() + " "
+        if not query.startswith(prefix):
+            continue
+        match = re.fullmatch(r'"([^"]+)"(?:\s+(.+))?', query[len(prefix):].strip())
+        if not match:
+            continue
+        market, qualifier = match.groups()
+        business_type = niche.label.split("&", 1)[0].strip()
+        return " ".join(part for part in (business_type, market, qualifier or "") if part)
+    return None
+
+
 class SearchSource:
     """Discover business websites via search and harvest their contacts.
 
@@ -218,7 +234,13 @@ class SearchSource:
         self.email_enricher = EmailEnricher(settings)
         self._worker_ctx = threading.local()
 
-    def _discover(self, query: str, num: int = 10, niche: Niche | None = None) -> list:
+    def _discover(
+        self,
+        query: str,
+        num: int = 10,
+        niche: Niche | None = None,
+        maps_query: str | None = None,
+    ) -> list:
         """Try cache and free engines before the quota-protected paid fallback.
 
         Search results are cached to disk (per query). A *fresh* cache (a
@@ -266,7 +288,11 @@ class SearchSource:
         if not live and self.search.available:
             logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
             try:
-                paid = self._clean_candidates(self.search.search(query, num=num))
+                paid_query = maps_query or query
+                paid_engine = "google_maps" if maps_query else "google"
+                paid = self._clean_candidates(
+                    self.search.search(paid_query, num=num, engine=paid_engine)
+                )
                 if paid and (niche is None or _results_relevant(paid, niche)):
                     live = paid
                 elif paid:
@@ -376,7 +402,12 @@ class SearchSource:
         results_per_query = _results_per_query(max_leads)
         for query in queries:
             logger.info("Searching: %r", query)
-            urls = self._discover(query, num=results_per_query, niche=niche)
+            urls = self._discover(
+                query,
+                num=results_per_query,
+                niche=niche,
+                maps_query=_maps_query(niche, query),
+            )
             discovered_any = discovered_any or bool(urls)
             for item in urls:
                 url = item["url"] if isinstance(item, dict) else item
