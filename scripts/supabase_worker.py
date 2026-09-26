@@ -31,7 +31,7 @@ from output.exporter import load_leads  # noqa: E402
 
 import requests  # noqa: E402
 
-LOG_LIMIT = 80
+LOG_LIMIT = 400
 RUN_TIMEOUT_SECONDS = 18_000
 UPLOAD_BATCH_SIZE = 50
 CANCEL_POLL_SECONDS = 5

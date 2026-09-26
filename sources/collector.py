@@ -259,6 +259,23 @@ class SearchSource:
         football club, "real" word matches), and we refuse to cache or probe
         those.
         """
+        # High-volume regional searches explicitly bank Maps businesses first.
+        # Keeping this independent from the free-engine branch guarantees that
+        # an acceptable but tiny free result set cannot suppress the larger
+        # local-business result page.
+        paid = []
+        if maps_query and self.search.available and allow_paid:
+            try:
+                paid = self._clean_candidates(
+                    self.search.search(maps_query, num=num, engine="google_maps")
+                )
+                if paid and niche is not None and not _results_relevant(paid, niche):
+                    logger.warning("SerpAPI Maps returned off-topic results for %r", maps_query)
+                    paid = []
+                logger.info("SerpAPI Maps supplied %d candidate websites for %r", len(paid), maps_query)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("SerpAPI Maps fallback failed: %s", exc)
+
         cached = self._clean_candidates(self._load_cached(query)) if self.settings.cache_search else []
         cached_fresh = bool(cached and self._is_cache_fresh(query))
 
@@ -269,7 +286,7 @@ class SearchSource:
             # new URLs inside the cache window.
             if niche is None or _results_relevant(cached, niche):
                 logger.info("Using cached results for %r (%d urls)", query, len(cached))
-                return list(cached)
+                return self._clean_candidates(_dedupe_urls(paid + cached))
             logger.info("Cached results for %r fail niche relevance; re-probing", query)
             cached = []
         live = []
@@ -290,29 +307,21 @@ class SearchSource:
             logger.warning("Engine %s returned off-topic results for %r; failing over",
                            type(engine).__name__, query)
 
-        use_paid = self.search.available and allow_paid and (not live or bool(maps_query))
+        use_paid = self.search.available and allow_paid and not maps_query and not live
         if use_paid:
-            if maps_query and live:
-                logger.info(
-                    "Supplementing free results for %r with quota-protected SerpAPI Maps",
-                    query,
-                )
-            else:
-                logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
+            logger.info("Free search engines failed for %r; trying quota-protected SerpAPI", query)
             try:
-                paid_query = maps_query or query
-                paid_engine = "google_maps" if maps_query else "google"
-                paid = self._clean_candidates(
-                    self.search.search(paid_query, num=num, engine=paid_engine)
+                organic_paid = self._clean_candidates(
+                    self.search.search(query, num=num, engine="google")
                 )
-                if paid and (niche is None or _results_relevant(paid, niche)):
-                    live = _dedupe_urls(live + paid)
-                elif paid:
+                if organic_paid and (niche is None or _results_relevant(organic_paid, niche)):
+                    paid.extend(organic_paid)
+                elif organic_paid:
                     logger.warning("SerpAPI returned off-topic results for %r", query)
             except Exception as exc:  # noqa: BLE001
                 logger.error("SerpAPI fallback failed: %s", exc)
-        merged = self._clean_candidates(_dedupe_urls(cached + live))
-        if live or cached:
+        merged = self._clean_candidates(_dedupe_urls(paid + cached + live))
+        if paid or live or cached:
             self._save_cache(query, merged)
             return merged
         return []

@@ -238,7 +238,7 @@ def test_maps_fallback_supplements_small_free_result_bank(real_estate_niche):
         niche=real_estate_niche,
         maps_query="Real Estate New York NY",
     )
-    assert [item["url"] for item in results] == ["https://free.example", "https://maps.example"]
+    assert [item["url"] for item in results] == ["https://maps.example", "https://free.example"]
     assert paid.calls == [("Real Estate New York NY", {"num": 10, "engine": "google_maps"})]
 
 
