@@ -59,13 +59,15 @@ async function submitRun() {
   const max = Number($("r_max").value);
   const out = $("r_out").value.trim();
   const seeds = $("r_seeds").value.trim();
+  const minQuality = Number($("r_quality").value) || 0;
   if (!niches.length) return notice("Choose at least one industry.");
   if (!Number.isInteger(max) || max < 1 || max > 500) return notice("Enter a lead target between 1 and 500.");
   if (!/^(data|output)\/(?!.*\.\.)[^\\]+\.(csv|json)$/i.test(out)) return notice("Save results to a CSV or JSON file under data/ or output/.");
   if (state.mode === "seeds" && !/^data\/(?!.*\.\.)[^\\]+$/.test(seeds)) return notice("Enter an existing seed file under data/.");
+  if ($("r_noenrich").checked && minQuality >= 30) return notice("Multi-channel quality filtering needs enrichment. Turn off Skip enrichment or choose a lower quality threshold.");
   const payload = {
     niche: niches, max, out, seeds: state.mode === "seeds" ? seeds : "",
-    min_quality: Number($("r_quality").value) || 0,
+    min_quality: minQuality,
     emails_only: $("r_email").checked,
     no_enrich: $("r_noenrich").checked,
     fresh: $("r_fresh").checked,
@@ -106,6 +108,17 @@ $("btnStop").addEventListener("click", async () => {
   } catch (error) { notice(`Could not stop the run: ${error.message}`); }
 });
 
+function hostedCompletionSummary(status, saved, discovered) {
+  if (saved > 0) return `Saved ${saved} real lead${saved === 1 ? "" : "s"}. Review them below.`;
+  if (discovered <= 0) return "No qualified leads were found. Try another industry, a larger target, or Use a seed list for known websites.";
+  const filters = status.filters_applied || {};
+  const steps = [`Found ${discovered} qualified lead${discovered === 1 ? "" : "s"}`];
+  if (filters.emails_only) steps.push(`the email filter kept ${Number(filters.emails_only.kept) || 0}`);
+  if (filters.min_quality) steps.push(`the ${Number(filters.min_quality.threshold) || 0}+ quality filter kept ${Number(filters.min_quality.kept) || 0}`);
+  if (filters.max_quality) steps.push(`the maximum quality filter kept ${Number(filters.max_quality.kept) || 0}`);
+  return `${steps.join(", but ")}. Relax the filters in Advanced options and start again.`;
+}
+
 function renderStatus(status) {
   state.status = status;
   const running = !!status.running;
@@ -130,8 +143,11 @@ function renderStatus(status) {
   $("runTitle").textContent = hosted ? (starting ? "Starting your scrape" : scraping ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Leads are ready" : "Ready when you are") : running ? "Your scrape is underway" : failed ? "The last run did not finish" : finished ? "Last run complete" : "Ready when you are";
   const errorLine = (status.log_tail || []).slice().reverse().find((line) => /\| ERROR\s+\|/.test(line));
   const found = Number(status.leads_collected_log) || 0;
+  const discovered = Number(status.leads_discovered) || found;
+  const filteredOut = finished && found === 0 && discovered > 0;
+  if (hosted && filteredOut) $("runTitle").textContent = "Leads found, filters too strict";
   $("runSummary").textContent = hosted
-    ? (starting ? "The scraper is starting now. You can leave this page open and leads will appear automatically." : scraping ? "Websites are being searched and checked now. Completed leads will appear below." : failed ? (status.error || "The scraper could not complete this run.") : finished ? (found ? `Saved ${found} real lead${found === 1 ? "" : "s"}. Review them below.` : "No leads were found by web search. Try Use a seed list to scrape known websites directly.") : "Choose your options and press Start scraping. Real leads will appear below automatically.")
+    ? (starting ? "The scraper is starting now. You can leave this page open and leads will appear automatically." : scraping ? "Websites are being searched and checked now. Completed leads will appear below." : failed ? (status.error || "The scraper could not complete this run.") : finished ? hostedCompletionSummary(status, found, discovered) : "Choose your options and press Start scraping. Real leads will appear below automatically.")
     : running
     ? `Working through ${status.niches?.length || 1} industry selection${status.niches?.length === 1 ? "" : "s"} using ${mode}.`
     : failed ? (errorLine ? errorLine.split(" | ").slice(-1)[0] : `Exit code ${status.exit_code}. Open the run log for details.`)
@@ -146,7 +162,7 @@ function renderStatus(status) {
   $("metricProbed").textContent = status.candidates_probed || 0;
   $("metricSearches").textContent = status.searches || 0;
   $("metricFound").textContent = found;
-  $("runCurrent").textContent = hosted ? (starting ? "Starting the scraper…" : scraping ? "Searching websites and collecting contacts…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
+  $("runCurrent").textContent = hosted ? (starting ? "Starting the scraper…" : scraping ? "Searching websites and collecting contacts…" : failed ? "Open the run log to see what happened." : filteredOut ? "Adjust Advanced options and start again." : finished ? "Ready for another run." : "Waiting for a run") : running ? status.current_url || status.current_query || "Preparing candidates…" : failed ? "Open the run log to see what happened." : finished ? "Ready for another run." : "Waiting for a run";
   $("runTime").textContent = `${running ? "Elapsed" : "Last duration"} ${status.elapsed_s ? timeText(status.elapsed_s) : "—"}`;
   $("btnRun").disabled = running || state.loading;
   $("btnRun").innerHTML = "Start scraping <span aria-hidden=\"true\">→</span>";

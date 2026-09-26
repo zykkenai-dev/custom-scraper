@@ -260,6 +260,10 @@ RE_PROBE = re.compile(r"Probing\s+(https?://\S+)")
 RE_CACHED = re.compile(r"Using cached results for\s+(.+?)\s+\((\d+)\s+urls\)")
 RE_COLLECTED = re.compile(r"collected\s+(\d+)\s+qualified leads for\s+(\S+)")
 RE_EXPORT = re.compile(r"Exported\s+(\d+)\s+leads to\s+(CSV|JSON):\s*(\S+)")
+RE_EMAIL_FILTER = re.compile(r"--emails-only:\s+kept\s+(\d+)\s+leads")
+RE_QUALITY_FILTER = re.compile(
+    r"--(min|max)-quality\s+(\d+):\s+kept\s+(\d+)\s+of\s+(\d+)\s+leads"
+)
 
 
 def parse_log(lines: list[str]) -> dict:
@@ -269,6 +273,7 @@ def parse_log(lines: list[str]) -> dict:
     per_niche: dict[str, int] = {}
     queries: list[str] = []
     cur_q, cur_u = "", ""
+    filters: dict[str, object] = {}
     for ln in lines:
         m = RE_SEARCH.search(ln)
         if m:
@@ -285,6 +290,16 @@ def parse_log(lines: list[str]) -> dict:
         if m:
             n = int(m.group(1))
             per_niche[m.group(2)] = n
+        m = RE_EMAIL_FILTER.search(ln)
+        if m:
+            filters["emails_only"] = {"kept": int(m.group(1))}
+        m = RE_QUALITY_FILTER.search(ln)
+        if m:
+            filters[f"{m.group(1)}_quality"] = {
+                "threshold": int(m.group(2)),
+                "kept": int(m.group(3)),
+                "before": int(m.group(4)),
+            }
     collected = sum(per_niche.values())
     return {
         "candidates_probed": probed,
@@ -294,6 +309,7 @@ def parse_log(lines: list[str]) -> dict:
         "current_query": cur_q,
         "current_url": cur_u,
         "queries_seen": queries[-12:],
+        "filters_applied": filters,
     }
 
 
@@ -356,6 +372,8 @@ def build_status() -> dict:
         "leads_found": leads_found,
         "leads_total": file_total,
         "leads_collected_log": stats["leads_collected"],
+        "leads_discovered": stats["leads_collected"],
+        "filters_applied": stats["filters_applied"],
         "per_niche": stats["per_niche"],
         "current_query": stats["current_query"],
         "current_url": stats["current_url"],
@@ -401,6 +419,8 @@ def _hosted_status(job: dict | None, requested_by: str = "") -> dict:
             "leads_found": 0,
             "leads_total": 0,
             "leads_collected_log": 0,
+            "leads_discovered": 0,
+            "filters_applied": {},
             "per_niche": {},
             "current_query": "",
             "current_url": "",
@@ -425,6 +445,7 @@ def _hosted_status(job: dict | None, requested_by: str = "") -> dict:
     if started:
         elapsed = ((ended or now) - started).total_seconds()
     found = int(job.get("leads_saved") or 0)
+    stats = parse_log(logs)
     running = status in {"queued", "running"}
     failed = status in {"failed", "cancelled"}
     completed = status == "completed"
@@ -445,15 +466,17 @@ def _hosted_status(job: dict | None, requested_by: str = "") -> dict:
         "ended_at": ended.isoformat() if ended else None,
         "exit_code": 0 if completed else 1 if failed else None,
         "elapsed_s": round(max(0.0, elapsed), 1),
-        "candidates_probed": 0,
-        "searches": 0,
+        "candidates_probed": stats["candidates_probed"],
+        "searches": stats["searches"],
         "leads_found": found,
         "leads_total": found,
         "leads_collected_log": found,
-        "per_niche": {},
-        "current_query": "",
-        "current_url": "",
-        "queries_seen": [],
+        "leads_discovered": stats["leads_collected"],
+        "filters_applied": stats["filters_applied"],
+        "per_niche": stats["per_niche"],
+        "current_query": stats["current_query"],
+        "current_url": stats["current_url"],
+        "queries_seen": stats["queries_seen"],
         "log_tail": logs,
         "log_lines": len(logs),
         "source_file": "Supabase public.leads",

@@ -161,6 +161,7 @@ class TestHostedOrigin:
         status = server._hosted_status(job, "tarun")
         assert status["job_status"] == "completed"
         assert status["leads_collected_log"] == 12
+        assert status["leads_discovered"] == 0
         assert status["niches"] == ["real_estate"]
         assert status["max"] == 500
 
@@ -263,6 +264,37 @@ class TestParseLog:
         stats = server.parse_log(lines)
         assert stats["leads_collected"] == 6
         assert stats["per_niche"] == {"real_estate": 2, "saas": 4}
+
+    def test_filter_funnel_is_preserved(self):
+        stats = server.parse_log([
+            "collected 8 qualified leads for real_estate",
+            "  --emails-only: kept 6 leads with emails.",
+            "  --min-quality 60: kept 0 of 6 leads.",
+        ])
+        assert stats["leads_collected"] == 8
+        assert stats["filters_applied"] == {
+            "emails_only": {"kept": 6},
+            "min_quality": {"threshold": 60, "kept": 0, "before": 6},
+        }
+
+    def test_hosted_status_distinguishes_discovered_from_saved(self):
+        status = server._hosted_status({
+            "id": "00000000-0000-0000-0000-000000000002",
+            "status": "completed",
+            "requested_by": "uttkarsh",
+            "options": {"niche": ["real_estate"], "max_leads": 50},
+            "log_tail": [
+                "Probing https://example.com/",
+                "collected 8 qualified leads for real_estate",
+                "--emails-only: kept 6 leads with emails.",
+                "--min-quality 60: kept 0 of 6 leads.",
+            ],
+            "leads_saved": 0,
+        }, "uttkarsh")
+        assert status["leads_collected_log"] == 0
+        assert status["leads_discovered"] == 8
+        assert status["candidates_probed"] == 1
+        assert status["filters_applied"]["min_quality"]["kept"] == 0
 
     def test_query_dedupe_and_tracking(self):
         lines = [
